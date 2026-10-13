@@ -176,6 +176,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.spark
+      args:
+        SPARK_IMAGE: ${SPARK_IMAGE:-bitnamilegacy/spark:3.5}
     container_name: bda-spark-job
     profiles: ["tools"]
     depends_on:
@@ -185,9 +187,14 @@ services:
       SPARK_MODE: client
       HDFS_RAW_URI: ${HDFS_RAW_URI:-hdfs://namenode:9000/emergency-admission-bda/raw/kafka-events}
       HDFS_PROCESSED_URI: ${HDFS_PROCESSED_URI:-hdfs://namenode:9000/emergency-admission-bda/processed/patient-features}
-      HDFS_QUARANTINE_URI: ${HDFS_QUARANTINE_URI:-hdfs://namenode:9000/emergency-admission-bda/processed/quarantine}
+      HDFS_QUARANTINE_URI: ${HDFS_QUARANTINE_URI:-hdfs://namenode:9000/emergency-admission-bda/quarantine/spark-processing}
+      HDFS_MANIFEST_URI: ${HDFS_MANIFEST_URI:-hdfs://namenode:9000/emergency-admission-bda/metadata/spark-processing}
+      SPARK_SHUFFLE_PARTITIONS: ${SPARK_SHUFFLE_PARTITIONS:-2}
+      SPARK_LOG_LEVEL: ${SPARK_LOG_LEVEL:-WARN}
+      HADOOP_USER_NAME: ${HADOOP_USER_NAME:-root}
     volumes:
       - ./data:/project-data
+      - ./scripts:/opt/bda:ro
     command:
       - /opt/bda/process_hdfs_with_spark.py
       - --master
@@ -197,7 +204,7 @@ services:
       - --output
       - hdfs://namenode:9000/emergency-admission-bda/processed/patient-features
       - --quarantine
-      - hdfs://namenode:9000/emergency-admission-bda/processed/quarantine
+      - hdfs://namenode:9000/emergency-admission-bda/quarantine/spark-processing
 
 volumes:
   kafka_data:

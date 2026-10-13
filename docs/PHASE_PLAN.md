@@ -1,8 +1,8 @@
 # Master Phase Implementation Plan
 
 **Project**: Emergency Admission Risk Prediction Using Big Data Analytics  
-**Current Milestone**: Phase 3: HDFS Ingestion & Raw Data Lake  
-**Authoritative Status**: Phases 1, 2, and 3 are verified and completed. Subsequent phases represent the incremental roadmap.
+**Current Milestone**: Phase 4: Apache Spark Data Processing & Feature Engineering  
+**Authoritative Status**: Phases 1, 2, 3, and 4 are verified and completed. Subsequent phases represent the incremental roadmap.
 
 ---
 
@@ -13,8 +13,8 @@
 | **Phase 1** | **Foundation & Synthetic Data Generation** | **COMPLETED** | Repo structure, `.env.example`, generator script, Docker Compose, starter API & dashboard, pytest suite. |
 | **Phase 2** | **Kafka Event Streaming & Data Ingestion** | **COMPLETED** | Topic management utility, schema-validated Kafka producer, at-least-once consumer, quarantine handling, JSONL stream archive, pytest suite. |
 | **Phase 3** | **HDFS Ingestion & Raw Data Lake** | **COMPLETED** | Date-partitioned raw lake, staged atomic upload, idempotency, SHA-256 verification, dynamic JSON manifests, cross-platform CLI, pytest suite. |
-| **Phase 4** | **Spark Processing & Feature Engineering** | Planned (Next Phase) | PySpark batch job, missingness imputation, patient longitudinal features, partitioned Parquet output. |
-| **Phase 5** | **Model Training & Evaluation** | Planned (Deferred to Phase 5) | Patient-grouped train/test split, Logistic Regression vs. Gradient Boosting, PR-AUC evaluation, model bundle export. |
+| **Phase 4** | **Spark Processing & Feature Engineering** | **COMPLETED** | PySpark batch processing, schema parsing, bounds enforcement, deduplication, median imputation, time and window features, partitioned Parquet output, quarantine & manifest, pytest suite. |
+| **Phase 5** | **Model Training & Evaluation** | Planned (Next Phase) | Patient-grouped train/test split, Logistic Regression vs. Gradient Boosting, PR-AUC evaluation, model bundle export. |
 | **Phase 6** | **FastAPI Model Inference** | Planned (Deferred to Phase 6) | Full prediction endpoints (`/predict`, `/predict/batch`), schema enforcement, threshold review flagging. |
 | **Phase 7** | **Streamlit Dashboard Integration** | Planned (Deferred to Phase 7) | End-to-end patient explorer with live model inference invocations, telemetry charts, alert banners. |
 | **Phase 8** | **Integration & Smoke Testing** | Planned (Deferred to Phase 8) | End-to-end pipeline test script, multi-service resilience, automated smoke test validation. |
@@ -59,3 +59,18 @@
 - **Cross-Platform Wrappers**: Implemented `scripts/ingest_to_hdfs.ps1` and `scripts/verify_hdfs.ps1` for Windows, along with `scripts/ingest_to_hdfs.sh` and `scripts/verify_hdfs.sh` for Linux/macOS.
 - **Automated Testing**: Implemented `tests/test_hdfs_ingestion.py` with 9 mock unit tests verifying validation, checksums, staging, idempotency, and error handling without requiring live Docker containers.
 - **Live Verification**: Successfully verified live HDFS upload, SafeMode health check, recursive listing, and disk usage on Docker NameNode/DataNode containers.
+
+---
+
+## 5. Phase 4 Accomplishments
+
+- **Spark Processing Engine**: Implemented production `scripts/process_hdfs_with_spark.py` using PySpark DataFrame API with explicit `ENVELOPE_SCHEMA` and permissive parsing for corrupt JSON record capture.
+- **Data Quality & Bounds Enforcement**: Configured 10 physiological data quality bounds converting out-of-range measurements to NULL for subsequent imputation rather than discarding patient records.
+- **Deterministic Deduplication**: Implemented distributed window deduplication partitioned by `event_id`, ordered by `kafka_partition`, `kafka_offset`, and `observation_ts` to eliminate streaming duplicates while preserving patient visit history.
+- **Missing-Value Imputation**: Implemented batch median imputation via `approxQuantile` across all 7 vital sign and lab measurements with dynamic tracking of pre-impute null counts.
+- **Feature Engineering**: Derived `observation_date` (date partition), `observation_hour` (circadian arrival signal), and `prior_observation_count` (window function partitioned by `patient_id` strictly excluding current visit).
+- **Partitioned Parquet Output**: Stored processed features in Apache Parquet partitioned by `observation_date` in HDFS at `/emergency-admission-bda/processed/patient-features`, with automatic export to `data/processed/features.parquet` for immediate Phase 5 modeling.
+- **Quarantine & Processing Manifest**: Implemented quarantine output routing for invalid identifiers or unparseable records, and dynamic JSON manifest publication to HDFS and local metadata storage.
+- **Cross-Platform Automation**: Added `scripts/process_hdfs_with_spark.ps1`, `scripts/process_hdfs_with_spark.sh`, `scripts/verify_spark.ps1`, and `scripts/verify_spark.sh`.
+- **Comprehensive Testing Suite**: Added `tests/test_spark_processing.py` (12 unit tests) bringing total passing tests to 56/56 (100% pass rate).
+- **Live Verification**: Executed live Spark job in Docker on real HDFS data lake, verifying 100 raw events -> 50 valid deduplicated rows -> 50+ date partitions in HDFS and local Parquet export.

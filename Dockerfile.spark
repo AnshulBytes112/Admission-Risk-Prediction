@@ -1,5 +1,12 @@
-FROM bitnami/spark:3.5
+ARG SPARK_IMAGE=bitnamilegacy/spark:3.5
+FROM ${SPARK_IMAGE}
 USER root
+ENV HOME=/tmp
+ENV HADOOP_USER_NAME=root
+ENV SPARK_SUBMIT_OPTS="-Duser.home=/tmp -Divy.home=/tmp/.ivy2"
+RUN echo "spark:x:1001:1001:spark:/tmp:/bin/bash" >> /etc/passwd && \
+    mkdir -p /opt/bda /tmp/.ivy2 && \
+    chown -R 1001:1001 /opt/bda /tmp
 COPY scripts/process_hdfs_with_spark.py /opt/bda/process_hdfs_with_spark.py
 USER 1001
 ENTRYPOINT ["/opt/bitnami/spark/bin/spark-submit"]

@@ -189,23 +189,38 @@ docker compose exec namenode hdfs dfs -cat /emergency-admission-bda/metadata/ing
 See [`docs/PHASE3_HDFS.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE3_HDFS.md) for full architecture diagrams, schema specifications, and Linux/macOS workflows.
 
 
-## Phase 4: PySpark processing
+## Phase 4: Apache Spark Data Processing & Feature Engineering (Windows PowerShell)
 
-After Phase 3 has uploaded Kafka JSONL events to HDFS, build and run the Spark processing job:
+Phase 4 reads the raw Kafka JSONL event archives from HDFS, applies data quality bounds, deduplicates events deterministically, performs batch median imputation, engineers time and window features, and writes a date-partitioned Parquet dataset to HDFS:
 
+### 1. Execute Spark Processing Job
+Run the PowerShell wrapper (or invoke Docker Compose directly):
 ```powershell
-docker compose --profile tools build spark-job
-docker compose --profile tools run --rm spark-job
+powershell -ExecutionPolicy Bypass -File scripts\process_hdfs_with_spark.ps1
+```
+*Advanced Options (with parameter overrides):*
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\process_hdfs_with_spark.ps1 -WriteMode overwrite -Master "local[*]"
 ```
 
-Verify the output in HDFS:
-
+### 2. Verify Output Parquet, Partitions & Manifests
 ```powershell
-docker compose exec namenode hdfs dfs -ls -R /emergency-admission-bda/processed/patient-features
-docker compose exec namenode hdfs dfs -du -h -s /emergency-admission-bda/processed/patient-features
+powershell -ExecutionPolicy Bypass -File scripts\verify_spark.ps1
 ```
 
-The job reads raw JSONL, parses nested events, quarantines malformed identifiers/timestamps, deduplicates event IDs, checks numeric bounds, imputes selected missing values, creates time/history features, and writes Parquet partitioned by observation date. See `docs/PHASE4_SPARK.md`. In Phase 5, model preprocessing will be fitted only on the training split to avoid leakage.
+### 3. Inspect Processed Dataset via Python / Pandas
+```powershell
+py -3.13 -c "import pandas as pd; df = pd.read_parquet('data/processed/features.parquet'); print(df.info()); print(df.head(2))"
+```
+
+### Features & Data Lake Deliverables:
+- **Distributed Parquet Storage**: Written to HDFS at `/emergency-admission-bda/processed/patient-features/observation_date=YYYY-MM-DD/*.parquet` and exported to `data/processed/features.parquet` for immediate Phase 5 modeling.
+- **Deterministic Deduplication**: Eliminates streaming duplicate events by `event_id` while preserving longitudinal patient visit history.
+- **Data Quality & Imputation**: Bounds checks 10 clinical features; converts out-of-range values to NULL; applies batch median imputation.
+- **Engineered Features**: Computes `observation_date`, `observation_hour` (arrival time signal), and `prior_observation_count` (strictly preceding patient visits).
+- **Processing Manifest**: Publishes dynamic execution receipts detailing record counts, duplicates removed, and imputation summaries to HDFS and `data/metadata/spark_manifests/`.
+
+See [`docs/PHASE4_SPARK.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE4_SPARK.md) for full architecture diagrams, schema specifications, and Linux/macOS workflows.
 
 
 ## Phase 5: machine learning

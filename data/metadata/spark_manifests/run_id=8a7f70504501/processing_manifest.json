@@ -1,0 +1,48 @@
+{
+  "manifest_version": "1.0",
+  "project": "emergency-admission-risk-prediction",
+  "data_origin": "synthetic",
+  "run_id": "8a7f70504501",
+  "processing_timestamp_utc": "2026-10-13T19:53:26Z",
+  "spark_version": "3.5.6",
+  "input_path": "hdfs://namenode:9000/emergency-admission-bda/raw/kafka-events",
+  "output_path": "hdfs://namenode:9000/emergency-admission-bda/processed/patient-features",
+  "raw_record_count": 100,
+  "valid_record_count": 100,
+  "quarantined_record_count": 0,
+  "duplicate_count": 50,
+  "output_record_count": 50,
+  "imputation_summary": {
+    "heart_rate": {
+      "pre_impute_null_count": 2,
+      "median_applied": 82.0
+    },
+    "systolic_bp": {
+      "pre_impute_null_count": 2,
+      "median_applied": 124.0
+    },
+    "diastolic_bp": {
+      "pre_impute_null_count": 0,
+      "median_applied": 78.0
+    },
+    "spo2": {
+      "pre_impute_null_count": 1,
+      "median_applied": 97.0
+    },
+    "respiratory_rate": {
+      "pre_impute_null_count": 0,
+      "median_applied": 15.0
+    },
+    "temperature_c": {
+      "pre_impute_null_count": 1,
+      "median_applied": 37.0
+    },
+    "lactate": {
+      "pre_impute_null_count": 0,
+      "median_applied": 1.3
+    }
+  },
+  "output_format": "parquet",
+  "partition_column": "observation_date",
+  "status": "SUCCESS"
+}
