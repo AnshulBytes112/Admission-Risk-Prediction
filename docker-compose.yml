@@ -1,6 +1,6 @@
 services:
   kafka:
-    image: bitnami/kafka:3.8
+    image: ${KAFKA_IMAGE:-bitnamilegacy/kafka:3.8}
     container_name: ${PROJECT_NAME:-emergency-admission-bda}-kafka
     ports:
       - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
@@ -60,7 +60,7 @@ services:
     restart: unless-stopped
 
   spark-master:
-    image: bitnami/spark:3.5
+    image: ${SPARK_IMAGE:-bitnamilegacy/spark:3.5}
     container_name: ${PROJECT_NAME:-emergency-admission-bda}-spark-master
     environment:
       SPARK_MODE: master
@@ -74,7 +74,7 @@ services:
     restart: unless-stopped
 
   spark-worker:
-    image: bitnami/spark:3.5
+    image: ${SPARK_IMAGE:-bitnamilegacy/spark:3.5}
     container_name: ${PROJECT_NAME:-emergency-admission-bda}-spark-worker
     depends_on:
       - spark-master
@@ -131,6 +131,45 @@ services:
     profiles: ["tools"]
     volumes:
       - ./data:/project/data
+
+  kafka-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.streaming
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-kafka-consumer
+    profiles: ["streaming"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_CONTAINER_BOOTSTRAP:-kafka:29092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-patient-observations}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-emergency-admission-bda-consumer}
+      STREAM_OUTPUT_PATH: ${STREAM_OUTPUT_PATH:-/project/data/streamed/patient_events.jsonl}
+      STREAM_ERROR_PATH: ${STREAM_ERROR_PATH:-/project/data/streamed/quarantine_events.jsonl}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/project/data
+    restart: unless-stopped
+
+  kafka-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.streaming
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-kafka-producer
+    profiles: ["tools"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_CONTAINER_BOOTSTRAP:-kafka:29092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-patient-observations}
+      INPUT_CSV: ${INPUT_CSV:-/project/data/raw/patient_observations.csv}
+      KAFKA_PUBLISH_DELAY_MS: ${KAFKA_PUBLISH_DELAY_MS:-25}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/project/data
+    command: ["python", "scripts/kafka_producer.py", "--input", "/project/data/raw/patient_observations.csv"]
 
 
   spark-job:

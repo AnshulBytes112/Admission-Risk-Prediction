@@ -87,18 +87,51 @@ docker compose down -v
 - Hadoop and Spark containers can be resource-intensive. If startup fails, start the services in smaller groups and check `docker compose logs <service>`.
 
 
-## Phase 2: Kafka streaming
+## Phase 2: Kafka Streaming and Data Ingestion (Windows PowerShell)
 
-Phase 2 adds a Kafka producer and consumer. First generate the dataset:
-`docker compose --profile tools run --build --rm data-generator`
+Phase 2 provides an end-to-end event-driven streaming pipeline:
 
-Start Kafka with `docker compose up -d kafka`. In terminal 1 run:
-`docker compose --profile streaming up --build kafka-consumer`
+### 1. Start Kafka Broker
+```powershell
+docker compose up -d kafka
+docker compose ps
+```
 
-In terminal 2 publish the CSV:
-`docker compose --profile tools run --build --rm kafka-producer`
+### 2. Generate Synthetic Observations (if not already present)
+```powershell
+py -3.13 scripts\generate_synthetic_data.py --rows 1000 --seed 42 --output data\raw\patient_observations.csv
+```
 
-Inspect `data/streamed/patient_events.jsonl`. Stop the consumer with Ctrl+C. See `docs/PHASE2_KAFKA.md` for options and troubleshooting. The JSONL file is the hand-off artifact for Phase 3 (HDFS).
+### 3. Start the Kafka Consumer (Terminal 1)
+**Local Execution:**
+```powershell
+py -3.13 scripts\kafka_consumer.py --output data\streamed\patient_events.jsonl
+```
+**Or Containerized:**
+```powershell
+docker compose --profile streaming up --build kafka-consumer
+```
+
+### 4. Stream Observations with the Producer (Terminal 2)
+**Local Execution:**
+```powershell
+py -3.13 scripts\kafka_producer.py --input data\raw\patient_observations.csv --limit 100 --delay-ms 10
+```
+**Or Containerized:**
+```powershell
+docker compose --profile tools run --build --rm kafka-producer python scripts/kafka_producer.py --input /project/data/raw/patient_observations.csv --limit 100 --delay-ms 10
+```
+
+### 5. Inspect Captured Stream Events
+```powershell
+# Inspect the first 2 archived JSONL events
+Get-Content .\data\streamed\patient_events.jsonl -TotalCount 2 | ConvertFrom-Json | Format-List
+
+# Count total archived events
+(Get-Content .\data\streamed\patient_events.jsonl).Count
+```
+
+Stop the consumer with `Ctrl+C` in Terminal 1. The consumer flushes remaining buffers, commits safe offsets, and closes cleanly. See [`docs/PHASE2_KAFKA.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE2_KAFKA.md) for full architecture and configuration options.
 
 
 ## Phase 3: Hadoop HDFS storage
