@@ -1,0 +1,15 @@
+{
+  "manifest_version": "1.0",
+  "project": "emergency-admission-risk-prediction",
+  "data_origin": "synthetic",
+  "source_filename": "patient_events.jsonl",
+  "source_size_bytes": 74474,
+  "source_sha256": "f3994d6e938a4668416092b08c23dfc2727503b87d40e06490dc3b3fe33736a2",
+  "record_count": 100,
+  "valid_record_count": 100,
+  "invalid_record_count": 0,
+  "ingestion_date": "2026-10-13",
+  "ingested_at_utc": "2026-10-13T19:21:51Z",
+  "hdfs_destination": "/emergency-admission-bda/raw/kafka-events/ingestion_date=2026-10-13/patient_events.jsonl",
+  "verification_status": "verified"
+}

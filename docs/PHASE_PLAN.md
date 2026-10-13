@@ -1,8 +1,8 @@
 # Master Phase Implementation Plan
 
 **Project**: Emergency Admission Risk Prediction Using Big Data Analytics  
-**Current Milestone**: Phase 2: Kafka Event Streaming and Data Ingestion  
-**Authoritative Status**: Phase 1 and Phase 2 are verified and completed. Subsequent phases represent the incremental roadmap.
+**Current Milestone**: Phase 3: HDFS Ingestion & Raw Data Lake  
+**Authoritative Status**: Phases 1, 2, and 3 are verified and completed. Subsequent phases represent the incremental roadmap.
 
 ---
 
@@ -12,8 +12,8 @@
 |---|---|---|---|
 | **Phase 1** | **Foundation & Synthetic Data Generation** | **COMPLETED** | Repo structure, `.env.example`, generator script, Docker Compose, starter API & dashboard, pytest suite. |
 | **Phase 2** | **Kafka Event Streaming & Data Ingestion** | **COMPLETED** | Topic management utility, schema-validated Kafka producer, at-least-once consumer, quarantine handling, JSONL stream archive, pytest suite. |
-| **Phase 3** | **HDFS Ingestion & Storage** | Planned (Deferred to Phase 3) | Date-partitioned landing zone, HDFS CLI automation, data integrity checks, persistence verification. |
-| **Phase 4** | **Spark Processing & Feature Engineering** | Planned (Deferred to Phase 4) | PySpark batch job, missingness imputation, patient longitudinal features, partitioned Parquet output. |
+| **Phase 3** | **HDFS Ingestion & Raw Data Lake** | **COMPLETED** | Date-partitioned raw lake, staged atomic upload, idempotency, SHA-256 verification, dynamic JSON manifests, cross-platform CLI, pytest suite. |
+| **Phase 4** | **Spark Processing & Feature Engineering** | Planned (Next Phase) | PySpark batch job, missingness imputation, patient longitudinal features, partitioned Parquet output. |
 | **Phase 5** | **Model Training & Evaluation** | Planned (Deferred to Phase 5) | Patient-grouped train/test split, Logistic Regression vs. Gradient Boosting, PR-AUC evaluation, model bundle export. |
 | **Phase 6** | **FastAPI Model Inference** | Planned (Deferred to Phase 6) | Full prediction endpoints (`/predict`, `/predict/batch`), schema enforcement, threshold review flagging. |
 | **Phase 7** | **Streamlit Dashboard Integration** | Planned (Deferred to Phase 7) | End-to-end patient explorer with live model inference invocations, telemetry charts, alert banners. |
@@ -43,3 +43,19 @@
 - **Phase 3 Hand-Off Contract**: Standardized UTF-8 JSON Lines stream archive at `data/streamed/patient_events.jsonl` matching the input schema required for Hadoop HDFS ingestion and PySpark processing.
 - **Docker Compose Integration**: Added `kafka-consumer` (`--profile streaming`) and `kafka-producer` (`--profile tools`) container definitions with health-check dependencies on Kafka.
 - **Automated Testing**: Added `tests/test_kafka_pipeline.py` with 13 unit and component tests validating serialization, envelopes, headers, quarantine, offset commit sequencing, and topic race handling without requiring external brokers.
+
+---
+
+## 4. Phase 3 Accomplishments
+
+- **Core Ingestion Engine**: Implemented `scripts/ingest_to_hdfs.py` supporting CLI overrides, SHA-256 integrity calculation, schema envelope verification, and SafeMode readiness polling.
+- **Data Lake Directory Layout**: Established date-partitioned HDFS layout:
+  - Raw lake: `/emergency-admission-bda/raw/kafka-events/ingestion_date=YYYY-MM-DD/patient_events.jsonl`
+  - Quarantine: `/emergency-admission-bda/quarantine/kafka-events/ingestion_date=YYYY-MM-DD/quarantine_events.jsonl`
+  - Metadata: `/emergency-admission-bda/metadata/ingestion-manifests/ingestion_date=YYYY-MM-DD/manifest.json`
+- **Safe Staged Upload & Atomic Commit**: Implemented staged uploads to temporary HDFS paths (`.tmp_<uuid>`), byte size verification against source, and atomic rename (`hdfs dfs -mv`) upon verification.
+- **Idempotency & Overwrite Guard**: Re-running ingestion on identical files produces an `idempotent_noop` without re-uploading; conflicting file sizes trigger safety aborts unless explicitly overridden with `--overwrite`.
+- **Dynamic Ingestion Manifests**: Publishes machine-readable JSON manifests containing dynamically computed SHA-256 hashes, exact byte counts, valid/invalid record totals, UTC timestamps, and explicit synthetic provenance.
+- **Cross-Platform Wrappers**: Implemented `scripts/ingest_to_hdfs.ps1` and `scripts/verify_hdfs.ps1` for Windows, along with `scripts/ingest_to_hdfs.sh` and `scripts/verify_hdfs.sh` for Linux/macOS.
+- **Automated Testing**: Implemented `tests/test_hdfs_ingestion.py` with 9 mock unit tests verifying validation, checksums, staging, idempotency, and error handling without requiring live Docker containers.
+- **Live Verification**: Successfully verified live HDFS upload, SafeMode health check, recursive listing, and disk usage on Docker NameNode/DataNode containers.

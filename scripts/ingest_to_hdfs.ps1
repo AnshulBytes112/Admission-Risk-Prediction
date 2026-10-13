@@ -1,34 +1,52 @@
+<#
+.SYNOPSIS
+    Ingests Phase 2 JSONL event stream archive into Hadoop HDFS (Phase 3).
+.DESCRIPTION
+    Wraps scripts/ingest_to_hdfs.py to execute validation, readiness polling,
+    idempotent staged upload, manifest publication, and verification.
+#>
 param(
-    [string]$LocalFile = ".\data\streamed\patient_events.jsonl",
-    [string]$HdfsBase = "/emergency-admission-bda/raw/kafka-events"
+    [string]$InputFile = $env:STREAM_OUTPUT_PATH,
+    [string]$HdfsBase = $env:HDFS_BASE_PATH,
+    [string]$IngestionDate = $env:HDFS_INGESTION_DATE,
+    [switch]$Overwrite,
+    [int]$TimeoutSeconds = 60
 )
+
 $ErrorActionPreference = "Stop"
 
-if (-not (Test-Path $LocalFile)) {
-    throw "Input file not found: $LocalFile. Complete Phase 2 first and ensure the Kafka consumer wrote events."
+if (-not $InputFile) {
+    $InputFile = ".\data\streamed\patient_events.jsonl"
+}
+if (-not $HdfsBase) {
+    $HdfsBase = "/emergency-admission-bda"
 }
 
-# The data directory is mounted read-only into the NameNode container at /shared-data.
-$resolved = (Resolve-Path $LocalFile).Path
-$relative = [System.IO.Path]::GetRelativePath((Get-Location).Path, $resolved).Replace("\", "/")
-$containerPath = "/shared-data/" + $relative.TrimStart("./")
-$partition = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
-$hdfsDir = "$HdfsBase/ingestion_date=$partition"
+if (-not (Test-Path $InputFile)) {
+    Write-Error "Input file not found: $InputFile. Complete Phase 2 first and verify that patient_events.jsonl exists."
+    exit 1
+}
 
-Write-Host "Checking NameNode..."
-docker compose exec namenode hdfs dfs -mkdir -p $hdfsDir
-if ($LASTEXITCODE -ne 0) { throw "Could not create HDFS directory. Check that Hadoop is healthy." }
+$scriptPath = Join-Path $PSScriptRoot "ingest_to_hdfs.py"
+$cmdArgs = @($scriptPath, "--input", $InputFile, "--hdfs-base", $HdfsBase, "--timeout", $TimeoutSeconds)
 
-$hdfsTarget = "$hdfsDir/patient_events.jsonl"
-Write-Host "Copying $containerPath to $hdfsTarget ..."
-docker compose exec namenode hdfs dfs -put -f $containerPath $hdfsTarget
-if ($LASTEXITCODE -ne 0) { throw "HDFS upload failed. Check the shared mount and input file." }
+if ($IngestionDate) {
+    $cmdArgs += @("--ingestion-date", $IngestionDate)
+}
+if ($Overwrite) {
+    $cmdArgs += "--overwrite"
+}
 
-Write-Host "`nHDFS directory listing:"
-docker compose exec namenode hdfs dfs -ls -h $hdfsDir
-if ($LASTEXITCODE -ne 0) { throw "Upload may have failed; unable to list destination." }
+# Execute via Python launcher or fallback
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    py -3.13 @cmdArgs
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    python @cmdArgs
+} else {
+    Write-Error "Python executable not found in PATH. Please install Python 3.11+."
+    exit 1
+}
 
-Write-Host "`nApproximate file size:"
-docker compose exec namenode hdfs dfs -du -h $hdfsTarget
-
-Write-Host "`nPhase 3 upload completed. Destination: $hdfsTarget"
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}

@@ -134,33 +134,59 @@ Get-Content .\data\streamed\patient_events.jsonl -TotalCount 2 | ConvertFrom-Jso
 Stop the consumer with `Ctrl+C` in Terminal 1. The consumer flushes remaining buffers, commits safe offsets, and closes cleanly. See [`docs/PHASE2_KAFKA.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE2_KAFKA.md) for full architecture and configuration options.
 
 
-## Phase 3: Hadoop HDFS storage
+## Phase 3: Hadoop HDFS Ingestion & Raw Data Lake (Windows PowerShell)
 
-Phase 3 adds a repeatable HDFS ingestion workflow for the JSONL file created by the Phase 2 Kafka consumer.
+Phase 3 provides an idempotent, staged HDFS ingestion pipeline that organizes the Phase 2 Kafka JSONL stream archive into a partitioned Big Data Lake:
 
-1. Ensure `data/streamed/patient_events.jsonl` exists and contains events.
-2. Start Hadoop:
+### 1. Start Hadoop NameNode & DataNode
+```powershell
+docker compose up -d namenode datanode
+docker compose ps
+```
 
-   ```powershell
-   docker compose up -d namenode datanode
-   docker compose ps
-   ```
+### 2. Verify Stream Archive Exists (from Phase 2)
+```powershell
+Test-Path .\data\streamed\patient_events.jsonl
+Get-Content .\data\streamed\patient_events.jsonl -TotalCount 2
+```
 
-3. Upload the stream output into a date-partitioned HDFS path:
+### 3. Ingest Stream Archive into HDFS
+Run the PowerShell wrapper (or invoke `scripts/ingest_to_hdfs.py` directly):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\ingest_to_hdfs.ps1
+```
+*Advanced Options (parameter overrides):*
+```powershell
+# Custom input path, explicit partition date, or forced overwrite:
+powershell -ExecutionPolicy Bypass -File scripts\ingest_to_hdfs.ps1 -InputFile .\data\streamed\patient_events.jsonl -IngestionDate "2026-10-14" -Overwrite
+```
 
-   ```powershell
-   .\scripts\ingest_to_hdfs.ps1
-   ```
+### 4. Verify HDFS Health and Storage Structure
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify_hdfs.ps1
+```
 
-4. Verify files and storage usage:
+### 5. Inspect Files in HDFS
+```powershell
+# List recursive directory tree
+docker compose exec namenode hdfs dfs -ls -R /emergency-admission-bda
 
-   ```powershell
-   .\scripts\verify_hdfs.ps1
-   ```
+# View published ingestion manifest
+docker compose exec namenode hdfs dfs -cat /emergency-admission-bda/metadata/ingestion-manifests/ingestion_date=2026-10-13/manifest.json
 
-5. Optional: open the NameNode UI at http://localhost:9870.
+# Check NameNode Web UI
+# Open http://localhost:9870 in your browser
+```
 
-The Compose configuration mounts `./data` read-only into the NameNode container at `/shared-data`. The script uses `hdfs dfs -put -f` and stores the event batch under `/emergency-admission-bda/raw/kafka-events/ingestion_date=YYYY-MM-DD/`. See `docs/PHASE3_HDFS.md` for troubleshooting and manual commands.
+### Features & Safety Guarantees:
+- **Date-Partitioned Landing Zone**: Raw files land under `/emergency-admission-bda/raw/kafka-events/ingestion_date=YYYY-MM-DD/patient_events.jsonl`.
+- **Staged Atomic Upload**: Files are written to a `.tmp_<uuid>` path in HDFS, verified for exact byte length, and atomically renamed.
+- **Idempotency**: Re-uploading an identical file returns an `idempotent_noop` without re-uploading; conflicting file sizes trigger safety aborts unless `-Overwrite` is passed.
+- **Data Quality & Quarantine**: Corrupted records are logged to `quarantine/kafka-events/` with line numbers and reasons.
+- **Machine-Readable Manifest**: Produces dynamic JSON manifests with SHA-256 hashes, valid/invalid record counts, and UTC timestamps.
+- **Phase 4 Ready**: The raw JSONL layout matches the exact input contract expected by `scripts/process_hdfs_with_spark.py`.
+
+See [`docs/PHASE3_HDFS.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE3_HDFS.md) for full architecture diagrams, schema specifications, and Linux/macOS workflows.
 
 
 ## Phase 4: PySpark processing
