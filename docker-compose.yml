@@ -1,0 +1,166 @@
+services:
+  kafka:
+    image: bitnami/kafka:3.8
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-kafka
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-namenode
+    ports:
+      - "${NAMENODE_UI_PORT:-9870}:9870"
+      - "${NAMENODE_RPC_PORT:-9000}:9000"
+    environment:
+      CLUSTER_NAME: emergency-admission-bda
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      HDFS_CONF_dfs_replication: 1
+    volumes:
+      - hdfs_namenode:/hadoop/dfs/name
+      - ./data:/shared-data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9870/ >/dev/null"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+    restart: unless-stopped
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-datanode
+    depends_on:
+      namenode:
+        condition: service_started
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      SERVICE_PRECONDITION: "namenode:9870"
+      HDFS_CONF_dfs_replication: 1
+    volumes:
+      - hdfs_datanode:/hadoop/dfs/data
+    ports:
+      - "${DATANODE_UI_PORT:-9864}:9864"
+    restart: unless-stopped
+
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-spark-master
+    environment:
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    ports:
+      - "${SPARK_MASTER_UI_PORT:-8080}:8080"
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+    restart: unless-stopped
+
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: 1
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      MODEL_PATH: ${MODEL_PATH:-/app/models/risk_model.joblib}
+      RISK_THRESHOLD: ${RISK_THRESHOLD:-0.7}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models:ro
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: ${PROJECT_NAME:-emergency-admission-bda}-dashboard
+    depends_on:
+      - api
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    environment:
+      API_BASE_URL: ${DASHBOARD_API_URL:-http://api:8000}
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      RISK_THRESHOLD: ${RISK_THRESHOLD:-0.7}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  data-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.data-generator
+    profiles: ["tools"]
+    volumes:
+      - ./data:/project/data
+
+
+  spark-job:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: bda-spark-job
+    profiles: ["tools"]
+    depends_on:
+      - namenode
+      - datanode
+    environment:
+      SPARK_MODE: client
+      HDFS_RAW_URI: ${HDFS_RAW_URI:-hdfs://namenode:9000/emergency-admission-bda/raw/kafka-events}
+      HDFS_PROCESSED_URI: ${HDFS_PROCESSED_URI:-hdfs://namenode:9000/emergency-admission-bda/processed/patient-features}
+      HDFS_QUARANTINE_URI: ${HDFS_QUARANTINE_URI:-hdfs://namenode:9000/emergency-admission-bda/processed/quarantine}
+    volumes:
+      - ./data:/project-data
+    command:
+      - /opt/bda/process_hdfs_with_spark.py
+      - --master
+      - local[*]
+      - --input
+      - hdfs://namenode:9000/emergency-admission-bda/raw/kafka-events
+      - --output
+      - hdfs://namenode:9000/emergency-admission-bda/processed/patient-features
+      - --quarantine
+      - hdfs://namenode:9000/emergency-admission-bda/processed/quarantine
+
+volumes:
+  kafka_data:
+  hdfs_namenode:
+  hdfs_datanode:

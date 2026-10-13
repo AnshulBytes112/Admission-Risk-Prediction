@@ -1,0 +1,77 @@
+# Environment configuration (never commit secrets or local env files)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing and coverage caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Generated runtime data files
+data/raw/*
+data/streamed/*
+data/processed/*
+*.csv
+*.tsv
+*.parquet
+*.jsonl
+
+# Generated machine learning models and serializations
+models/*
+*.joblib
+*.pkl
+*.onnx
+*.pt
+*.h5
+
+# Application secrets and Streamlit configs
+.streamlit/secrets.toml
+
+# Logs and runtime artifacts
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS-generated and temporary files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# Build and archive files
+build/
+dist/
+*.egg-info/
+*.zip
+*.tar.gz

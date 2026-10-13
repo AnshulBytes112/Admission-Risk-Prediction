@@ -1,0 +1,7 @@
+FROM python:3.11-slim
+WORKDIR /project
+COPY requirements-streaming.txt .
+RUN pip install --no-cache-dir -r requirements-streaming.txt
+COPY scripts ./scripts
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "scripts/kafka_consumer.py"]

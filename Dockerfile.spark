@@ -1,0 +1,6 @@
+FROM bitnami/spark:3.5
+USER root
+COPY scripts/process_hdfs_with_spark.py /opt/bda/process_hdfs_with_spark.py
+USER 1001
+ENTRYPOINT ["/opt/bitnami/spark/bin/spark-submit"]
+CMD ["/opt/bda/process_hdfs_with_spark.py"]

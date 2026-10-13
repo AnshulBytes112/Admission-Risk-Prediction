@@ -1,0 +1,7 @@
+FROM python:3.11-slim
+WORKDIR /project
+COPY requirements-data.txt .
+RUN pip install --no-cache-dir -r requirements-data.txt
+COPY scripts ./scripts
+RUN mkdir -p data/raw
+CMD ["python", "scripts/generate_synthetic_data.py", "--rows", "10000", "--output", "data/raw/patient_observations.csv"]
