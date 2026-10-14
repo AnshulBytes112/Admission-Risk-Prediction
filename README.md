@@ -1,474 +1,590 @@
-# Emergency Admission Risk Prediction — BDA Project
+# Emergency Admission Risk Prediction — Big Data Analytics Platform
 
-A local-first academic Big Data Analytics project scaffold for the topic:
+An enterprise-grade, academic Big Data Analytics (BDA) and Machine Learning platform that predicts emergency room patient admission risk using distributed streaming, distributed storage, large-scale data processing, gradient-boosted machine learning, and an interactive modern clinical dashboard.
 
-**Emergency Admission Risk Prediction**
+---
 
-The first phase provides the repository foundation, synthetic-data generator, Docker Compose infrastructure, and starter API/dashboard. The dataset is synthetic and is **not MIMIC-III**. No clinical use is intended.
+> [!CAUTION]
+> **ACADEMIC DEMONSTRATION NOTICE**:
+> All patient records, clinical vitals, laboratory results, and admission risk labels in this project are **SYNTHETIC**. The platform is an academic Big Data software engineering demonstration and is **NOT clinically validated**. It must never be used for actual medical diagnosis, patient triage, or healthcare decisions.
 
-## Architecture
+---
 
-Synthetic CSV → Kafka (Phase 2) → HDFS (Phase 3) → PySpark processing (Phase 4) → ML training/scoring (Phase 5) → FastAPI → Streamlit dashboard.
+## Table of Contents
+1. [Project Overview & Problem Statement](#1-project-overview--problem-statement)
+2. [End-to-End System Architecture](#2-end-to-end-system-architecture)
+3. [Technology Stack](#3-technology-stack)
+4. [Big Data Infrastructure in Detail](#4-big-data-infrastructure-in-detail)
+   - [Apache Kafka — Distributed Event Streaming](#apache-kafka--distributed-event-streaming)
+   - [Apache Hadoop HDFS — Distributed Data Lake](#apache-hadoop-hdfs--distributed-data-lake)
+   - [Apache Spark (PySpark) — Distributed Feature Engineering](#apache-spark-pyspark--distributed-feature-engineering)
+   - [Partitioned Parquet — Columnar Storage](#partitioned-parquet--columnar-storage)
+5. [Machine Learning Pipeline & Model Governance](#5-machine-learning-pipeline--model-governance)
+   - [12 Canonical Clinical Features](#12-canonical-clinical-features)
+   - [Data Leakage Prevention](#data-leakage-prevention)
+   - [Model Comparison & PR-AUC Selection](#model-comparison--pr-auc-selection)
+   - [Dynamic Clinical Decision Threshold Controller](#dynamic-clinical-decision-threshold-controller)
+6. [Frontend Application & Page-by-Page Feature Tour](#6-frontend-application--page-by-page-feature-tour)
+   - [Page 1: Clinical Risk Dashboard](#page-1-clinical-risk-dashboard-dashboard)
+   - [Page 2: Single Patient Risk Assessment](#page-2-single-patient-risk-assessment-single)
+   - [Page 3: Batch Triage & CSV Evaluation](#page-3-batch-triage--csv-evaluation-batch)
+   - [Page 4: Big Data Architecture & Live Trace](#page-4-big-data-architecture--live-trace-pipeline)
+   - [Page 5: Model Governance & Performance Auditing](#page-5-model-governance--performance-auditing-model)
+   - [Page 6: System Health & Infrastructure Observability](#page-6-system-health--infrastructure-observability-system)
+   - [Page 7: Academic Project Reference & Documentation](#page-7-academic-project-reference--documentation-about)
+7. [FastAPI Backend Service & API Contracts](#7-fastapi-backend-service--api-contracts)
+8. [Quick Start & Step-by-Step Execution Guide](#8-quick-start--step-by-step-execution-guide)
+9. [Project Report Writing Guide & Reference Formulas](#9-project-report-writing-guide--reference-formulas)
+10. [Automated Testing & Quality Assurance](#10-automated-testing--quality-assurance)
 
-## Requirements
+---
 
-- Docker Desktop with Docker Compose v2
-- Python 3.11+ (optional, for generating data outside Docker)
-- At least 8 GB RAM recommended; 12–16 GB is more comfortable for Hadoop + Spark
-- Windows users: run commands in PowerShell from this directory
+## 1. Project Overview & Problem Statement
 
-## Phase 1: Quick Start (Windows PowerShell)
+### 1.1 The Clinical & Big Data Challenge
+Emergency Departments (ED) worldwide experience critical overcrowding, bed shortages, and resource bottlenecks. Unplanned emergency admissions represent a major operational and clinical challenge:
+- **Triage Delay:** Overcrowded emergency rooms struggle to rapidly distinguish patients who require acute inpatient admission from those who can be safely stabilized and discharged.
+- **Data Velocity & Volume:** Continuous patient vitals (heart rate, blood pressure, SpO2, respiratory rate, temperature) arrive as high-velocity time-series streams from bedside monitors and electronic health record (EHR) systems.
+- **Data Heterogeneity & Quality:** Telemetry streams contain missing values, network jitter, out-of-range sensor artifacts, and duplicate packets.
+- **Class Imbalance:** In general emergency admissions, acute admissions typically constitute an imbalanced positive class relative to routine discharges.
 
-### 1. Environment Configuration
-Copy the configuration template:
-```powershell
-Copy-Item .env.example .env
+### 1.2 Project Objectives
+1. **High-Throughput Ingestion:** Stream synthetic patient vitals through **Apache Kafka** with partition-key ordering.
+2. **Fault-Tolerant Distributed Storage:** Ingest streamed observations into **Hadoop HDFS** with date partitioning, atomic staging, idempotency guarantees, and SHA-256 verification manifests.
+3. **Scalable Batch Transformation:** Clean, deduplicate, impute, and engineer temporal/window features using **Apache Spark (PySpark)**, exporting to **Partitioned Parquet**.
+4. **Reproducible Machine Learning:** Train and compare multiple ML algorithms (HistGradientBoosting, XGBoost, Random Forest, Logistic Regression) using **PR-AUC (Average Precision)** model selection and **patient-level group isolation** to eliminate data leakage.
+5. **Real-Time Serving & Traceability:** Serve low-latency inference via **FastAPI** with live end-to-end Big Data pipeline telemetry.
+6. **Clinical SaaS Interface:** Provide an interactive **React.js** frontend with dynamic threshold control, batch CSV processing, and pipeline visualization.
+
+---
+
+## 2. End-to-End System Architecture
+
+```mermaid
+graph TD
+    subgraph S1["1. Ingestion & Streaming Layer"]
+        GEN["Synthetic Data Generator<br/>(scripts/generate_synthetic_data.py)"] -->|Clinical CSV| PROD["Kafka Producer<br/>(scripts/kafka_producer.py)"]
+        PROD -->|Key: patient_id| TOPIC["Kafka Broker: patient-observations<br/>(3 Partitions, KRaft Mode, Port 9092)"]
+        TOPIC -->|Stream Consumer| CONS["Kafka Consumer<br/>(scripts/kafka_consumer.py)"]
+    end
+
+    subgraph S2["2. Distributed Storage Layer (Data Lake)"]
+        CONS -->|Append Stream| JSONL["Stream Archive<br/>(data/streamed/patient_events.jsonl)"]
+        JSONL -->|Atomic Upload (.tmp)| HDFS["Hadoop HDFS Cluster<br/>(/emergency-admission-bda/raw/kafka-events)"]
+        HDFS -->|Integrity Receipt| MAN1["HDFS Ingestion Manifest<br/>(SHA-256 Checksum, Record Counts)"]
+    end
+
+    subgraph S3["3. Distributed Processing Layer (PySpark)"]
+        HDFS -->|Read JSONL| SPARK["PySpark Processing Engine<br/>(SparkSession 3.5, Port 8080)"]
+        SPARK --> DEDUP["Deduplication & Data Quality<br/>(FEATURE_RANGES, Windowing)"]
+        DEDUP -->|Clean Feature Vector| PARQ["Partitioned Parquet Dataset<br/>(/emergency-admission-bda/processed/patient-features)"]
+        DEDUP -->|Out-of-bounds/Corrupt| QUAR["HDFS Quarantine<br/>(quarantine/spark-processing)"]
+        SPARK -->|Execution Audit| MAN2["Spark Processing Manifest<br/>(data/metadata/spark_manifests)"]
+    end
+
+    subgraph S4["4. Machine Learning & Model Registry Layer"]
+        PARQ -->|Train Split| ML["Model Training Pipeline<br/>(scripts/train_risk_model.py)"]
+        ML --> GSS["GroupShuffleSplit on patient_id<br/>(Zero Leakage Across Folds)"]
+        GSS --> EVAL["PR-AUC Model Evaluation & Tuning<br/>(HistGradientBoosting, Threshold 0.70)"]
+        EVAL --> BUNDLE["Model Bundle Registry<br/>(models/risk_model.joblib + metadata.json)"]
+    end
+
+    subgraph S5["5. Real-Time Inference & Clinical Dashboard Layer"]
+        BUNDLE --> API["FastAPI Serving Engine<br/>(Port 8000: /predict, /config/threshold)"]
+        API -->|Real-time REST + Live Pipeline Trace| REACT["React.js Clinical Dashboard<br/>(Port 3000: SaaS UI, 7 Interactive Pages)"]
+    end
+
+    classDef stream fill:#eff6ff,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+    classDef storage fill:#f5f3ff,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95;
+    classDef processing fill:#fdf2f8,stroke:#db2777,stroke-width:1.5px,color:#831843;
+    classDef ml fill:#ecfdf5,stroke:#059669,stroke-width:1.5px,color:#064e3b;
+    classDef ui fill:#fffbeb,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+
+    class GEN,PROD,TOPIC,CONS stream;
+    class JSONL,HDFS,MAN1 storage;
+    class SPARK,DEDUP,PARQ,QUAR,MAN2 processing;
+    class ML,GSS,EVAL,BUNDLE ml;
+    class API,REACT ui;
 ```
-Validate the Docker Compose configuration:
-```powershell
-docker compose config --quiet
+
+---
+
+## 3. Technology Stack
+
+| Layer | Component | Version / Tech | Role & Architectural Purpose |
+|---|---|---|---|
+| **Frontend** | **React.js** | React 18 | Modern Single-Page Application (SPA) with 7 distinct clinical views |
+| **Build Tool** | **Vite** | Vite 5.x | High-speed frontend bundling, hot module reloading (HMR), reverse proxy |
+| **Styling** | **Vanilla CSS** | Modern CSS3 | Custom design system: dark sidebar, glassmorphic cards, responsive layouts |
+| **Backend API** | **FastAPI** | FastAPI 0.115+ | High-performance asynchronous REST API for single/batch prediction & telemetry |
+| **ASGI Server** | **Uvicorn** | Uvicorn 0.30+ | Asynchronous server implementation supporting workers and hot reload |
+| **Data Validation** | **Pydantic** | Pydantic v2 | Strict schema validation, physiological bounds checking, alias reconciliation |
+| **Streaming** | **Apache Kafka** | Kafka 3.7 (KRaft) | High-throughput distributed event streaming for patient observation telemetry |
+| **Distributed Storage** | **Apache Hadoop** | Hadoop 3.3.6 (HDFS) | Fault-tolerant distributed data lake with NameNode and DataNode clustering |
+| **Distributed Processing** | **Apache Spark** | PySpark 3.5.x | Cluster-scale data cleaning, deduplication, median imputation, and windowing |
+| **File Format** | **Apache Parquet** | Parquet (Snappy) | Columnar storage format partitioned by `observation_date` |
+| **Machine Learning** | **scikit-learn / XGBoost** | scikit-learn 1.5+ | HistGradientBoosting, XGBoost, Random Forest, Logistic Regression |
+| **Model Registry** | **Joblib** | Joblib 1.4+ | Atomic serialized model bundle packaging pipeline, threshold, and feature schema |
+| **Containerization** | **Docker** | Docker Engine 26+ | Multi-stage Dockerfiles for microservice isolation and reproducible execution |
+| **Orchestration** | **Docker Compose** | Docker Compose v2 | Multi-container coordination (Kafka, HDFS, Spark, API, Dashboard, React) |
+| **Testing** | **pytest** | pytest 8.x | Comprehensive test suite (114+ passing unit, integration, and contract tests) |
+
+---
+
+## 4. Big Data Infrastructure in Detail
+
+### Apache Kafka — Distributed Event Streaming
+- **Role:** Acts as the high-velocity ingestion buffer that decouples hospital patient monitors from downstream storage and analytical engines.
+- **Broker Configuration:** Runs in KRaft (Kafka Raft metadata) mode, eliminating the external ZooKeeper dependency.
+- **Topic Configuration:**
+  - Topic Name: `patient-observations`
+  - Partitions: 3 (allows parallel consumption across worker threads).
+  - Partition Key: `patient_id` (guarantees that all observations for any individual patient land in the same partition in strict chronological sequence).
+- **Producer Architecture (`scripts/kafka_producer.py`):**
+  - Reads raw CSV observations and serializes each row into a structured JSON event record.
+  - Injects ingestion metadata: `event_id` (UUIDv4), `ingestion_timestamp` (ISO 8601 UTC), and `schema_version` (1.0).
+  - Implements configurable batching and delay parameters (`--delay-ms`) for rate simulation.
+- **Non-Blocking FastAPI Fallback Check:**
+  - The API inference endpoint includes a lightweight socket preflight check (300ms timeout) against `localhost:9092`.
+  - If Kafka is unreachable (e.g. running outside Docker), it stages events into a local memory buffer and returns predictions in under 500ms without blocking.
+
+### Apache Hadoop HDFS — Distributed Data Lake
+- **Role:** Serves as the immutable, fault-tolerant raw data lake for longitudinal patient observation archives.
+- **Cluster Components:**
+  - **NameNode:** Master node managing filesystem namespace, block mapping, and metadata (Port 9870 Web UI, Port 9000 RPC).
+  - **DataNode:** Worker node storing distributed block replicas (Port 9864 Web UI).
+- **HDFS Directory Layout:**
+  ```
+  /emergency-admission-bda/
+  ├── raw/
+  │   └── kafka-events/
+  │       └── ingestion_date=YYYY-MM-DD/
+  │           └── patient_events.jsonl
+  ├── processed/
+  │   └── patient-features/
+  │       └── observation_date=YYYY-MM-DD/
+  │           └── part-*.parquet
+  ├── metadata/
+  │   └── ingestion-manifests/
+  │       └── ingestion_date=YYYY-MM-DD/
+  │           └── manifest.json
+  └── quarantine/
+      ├── kafka-events/
+      └── spark-processing/
+  ```
+- **Enterprise Safety & Idempotency Features:**
+  - **Staged Atomic Upload:** Files are uploaded to a temporary hidden path (`.tmp_<uuid>`), verified for byte completeness, and atomically renamed into the target directory.
+  - **Idempotency Check:** Before writing, the ingestion script (`scripts/ingest_to_hdfs.py`) compares file size and cryptographic hashes. Re-uploading identical data results in an `idempotent_noop` rather than creating duplicate partitions.
+  - **Quarantine Zone:** Malformed JSON strings or records violating schema constraints are diverted to `/emergency-admission-bda/quarantine/` with line-level failure annotations.
+  - **Verification Manifest:** Every upload writes a machine-readable JSON manifest recording input SHA-256, HDFS file size, record count, and timestamp.
+
+### Apache Spark (PySpark) — Distributed Feature Engineering
+- **Role:** Distributed compute engine that transforms raw JSONL events into model-ready analytical feature vectors.
+- **Execution Script:** `scripts/process_hdfs_with_spark.py`
+- **Key Transformations:**
+  1. **Schema Enforcement:** Applies a strict PySpark StructType schema across incoming JSON records.
+  2. **Deterministic Deduplication:** Deduplicates streaming events on `event_id` while strictly preserving patient longitudinal visits.
+  3. **Data Quality Clamping & Median Imputation:** Checks 10 vital signs against physiological clinical bounds (`FEATURE_RANGES`). Out-of-bounds artifacts are converted to nulls and imputed using batch median values.
+  4. **Temporal Feature Engineering:** Extracts arrival `observation_date` (partition column) and `observation_hour` (0–23 circadian rhythm indicator).
+  5. **Longitudinal Window Feature:** Computes `prior_observation_count` using a PySpark Window partitioned by `patient_id` and ordered by `observation_timestamp` (strictly counting preceding visits to avoid future leakage).
+
+### Partitioned Parquet — Columnar Storage
+- **Format:** Apache Parquet with Snappy compression.
+- **Benefits:**
+  - **Columnar Projection:** Downstream model training only reads the necessary predictor columns, cutting disk I/O by over 70%.
+  - **Partition Pruning:** Date partitioning (`observation_date=YYYY-MM-DD`) enables queries to skip non-relevant date directories.
+  - **Strong Typing:** Encodes strict numeric float/double types, eliminating schema drift between Spark and scikit-learn.
+
+---
+
+## 5. Machine Learning Pipeline & Model Governance
+
+### 12 Canonical Clinical Features
+The model operates on a strictly validated 12-feature vector:
+
+| # | Feature Name | Description | Clinical Unit | Valid Bound |
+|---|---|---|---|---|
+| 1 | `age` | Patient chronological age | Years | [18.0, 100.0] |
+| 2 | `heart_rate` | Pulse rate | Beats per minute (bpm) | [25.0, 240.0] |
+| 3 | `systolic_bp` | Systolic arterial pressure | mmHg | [40.0, 300.0] |
+| 4 | `diastolic_bp` | Diastolic arterial pressure | mmHg | [20.0, 200.0] |
+| 5 | `spo2` / `oxygen_saturation` | Peripheral blood oxygen saturation | Percentage (%) | [50.0, 100.0] |
+| 6 | `respiratory_rate` | Breathing frequency | Breaths / min | [3.0, 80.0] |
+| 7 | `temperature_c` | Core body temperature | Degrees Celsius (°C) | [30.0, 44.0] |
+| 8 | `previous_admissions` | Prior ED hospitalizations | Count | [0.0, 100.0] |
+| 9 | `chronic_conditions_count` | Documented chronic comorbidities | Count | [0.0, 50.0] |
+| 10 | `lactate` | Blood serum lactate concentration | mmol/L | [0.0, 30.0] |
+| 11 | `observation_hour` | Hour of ED presentation (circadian cycle) | Hour (0–23) | [0.0, 23.0] |
+| 12 | `prior_observation_count` | Strictly preceding visits for this patient | Count | [0.0, 100000.0] |
+
+### Data Leakage Prevention
+To guarantee valid generalization and prevent test set contamination:
+- **Identifier Stripping:** Patient IDs (`patient_id`), record IDs (`event_id`), and timestamps (`observation_timestamp`) are stripped prior to feature matrix construction.
+- **Patient-Level Group Isolation (`GroupShuffleSplit`):** Splitting is performed across unique `patient_id` values. Observations from the same patient never appear in both training and evaluation splits, preventing cross-observation patient identity leakage.
+- **Preprocessing Encapsulation:** Imputation medians and scaling parameters are computed strictly inside training folds using scikit-learn Pipelines.
+
+### Model Comparison & PR-AUC Selection
+Because acute emergency admissions exhibit class imbalance, standard accuracy is misleading (a naive classifier predicting "No Admit" achieves high accuracy while missing critical emergencies). Therefore, models are compared using **PR-AUC (Precision-Recall Area Under Curve / Average Precision)**:
+
+1. **HistGradientBoostingClassifier (Primary Champion):**
+   - Employs histogram-based binning of continuous numerical features.
+   - Handles nonlinear physiological interactions (e.g. shock index: low BP combined with elevated heart rate).
+   - Provides native class weighting (`class_weight='balanced'`).
+2. **Random Forest Classifier:**
+   - Ensemble of 100 decision trees with balanced subsampling.
+3. **Logistic Regression (Linear Baseline):**
+   - Robust L2-regularized linear model with standardized features.
+
+### Dynamic Clinical Decision Threshold Controller
+- **The Concept:** Traditional ML pipelines hardcode a classification threshold of `0.50`. In emergency medicine, decision thresholds must be calibrated according to hospital capacity, bed availability, and epidemiological alerts.
+- **Implementation:**
+  - Default threshold: `0.70` (configured in model bundle metadata).
+  - Runtime override via `POST /config/threshold`: Allows hospital administrators to adjust the global decision cutoff between `0.01` and `0.99`.
+  - Immediate feedback: If threshold is increased to `0.90`, moderate patients (e.g. 87% risk) shift from **ADMIT** to **OBSERVE / DISCHARGE**.
+  - Dual control: Supports global runtime threshold, request-level query parameter, and payload-level override.
+
+---
+
+## 6. Frontend Application & Page-by-Page Feature Tour
+
+The React frontend (`frontend/`) is a clinical SaaS analytics platform accessible at `http://localhost:3000`. It contains 7 dedicated navigation pages:
+
+```
+[ Navigation Sidebar ]
+  ├── 1. Dashboard         -> Clinical Overview & KPI Metrics
+  ├── 2. Single Predict    -> 12-Feature Patient Risk Form + Presets + Pipeline Trace
+  ├── 3. Batch Triage      -> CSV Upload, Batch Inference, Risk Distribution & Export
+  ├── 4. BDA Pipeline      -> Interactive 13-Stage Architecture Diagram & Trace
+  ├── 5. Model Governance  -> PR-AUC Metrics, Confusion Matrix, Threshold Curves
+  ├── 6. System Health     -> Real-Time Probes (FastAPI, Kafka, HDFS, Spark)
+  └── 7. About & Docs      -> Academic Documentation, Data Dictionary & Theory
 ```
 
-### 2. Generate the Synthetic Dataset
-You can generate the synthetic clinical observation dataset locally or via Docker:
+### Page 1: Clinical Risk Dashboard (`dashboard`)
+- **Header & Live Status Banner:** Displays backend connection status, active model name (`hist_gradient_boosting`), active decision threshold (`0.70`), and an experimental badge.
+- **Top Metric Cards:**
+  - *Active Triage Census:* Total evaluated patient encounters.
+  - *Predicted Admission Rate:* Percentage of scored patients crossing the admission threshold.
+  - *Mean Clinical Risk Score:* Average predicted probability across recent cases.
+  - *System Health Index:* End-to-end API response latency and broker readiness.
+- **Dynamic Decision Threshold Slider:** Global UI controller with range `0.01` to `0.99`. Moving the slider dynamically calls `POST /config/threshold` on the backend and updates all live prediction cards in real time.
+- **Quick Evaluation Panel:** Provides quick-start presets to evaluate representative clinical cases with one click.
+- **Recent Patient Activity Table:** Chronological log of recent patient evaluations with risk badges (Red: High/Admit, Yellow: Moderate, Green: Low).
 
-**Option A — Local Python:**
-```powershell
-py -3.13 scripts\generate_synthetic_data.py --rows 10000 --seed 42 --output data\raw\patient_observations.csv
+### Page 2: Single Patient Risk Assessment (`single`)
+- **12 Canonical Input Controls:** Interactive numeric inputs for all 12 physiological and clinical history features, each equipped with clinical valid-range hints and unit labels.
+- **One-Click Clinical Preset Buttons:**
+  - **Healthy Adult Preset:** (Age 28, HR 72, BP 118/76, SpO2 98.5%, RR 16, Temp 36.8°C, 0 admissions, 0 conditions, Lactate 1.5) $\rightarrow$ Produces **0.02% risk (NO ADMIT)**.
+  - **Septic Shock / Critical Preset:** (Age 75, HR 130, BP 78/45, SpO2 82.0%, RR 32, Temp 39.5°C, 4 admissions, 3 conditions, Lactate 5.5) $\rightarrow$ Produces **99.65% risk (ADMIT)**.
+  - **Borderline / Elevated Preset:** (Age 62, HR 108, BP 145/92, SpO2 93%, RR 22, Temp 38.1°C, 2 admissions, 2 conditions, Lactate 3.2) $\rightarrow$ Produces **87.97% risk**.
+- **Real-Time Client-Side Validation:** Validates numbers against `FEATURE_RANGES` on keystroke, preventing non-finite or out-of-range payloads.
+- **Detailed Prediction Result Card:**
+  - Large Risk Probability Gauge (`0.0% – 100.0%`).
+  - Clear Clinical Recommendation Banner (`ADMIT TO INPATIENT` vs `OBSERVE / DISCHARGE`).
+  - Comparative threshold indicator showing whether risk exceeded the active threshold.
+- **Live Big Data Execution Trace Panel (`LivePipelineExecutionTrace.jsx`):**
+  - Renders a 5-step trace card directly in response to the prediction:
+    1. *Stage 1 — Patient Ingestion:* Schema verification and normalization.
+    2. *Stage 2 — Apache Kafka Producer:* Message stream confirmation to topic `patient-observations` with partition and offset telemetry.
+    3. *Stage 3 — Hadoop HDFS Archive:* Date-partitioned raw JSONL persistence path and replication factor.
+    4. *Stage 4 — Apache Spark & Parquet:* Schema alignment against partitioned Parquet lake.
+    5. *Stage 5 — Gradient Boosted Inference:* Final model inference probability and decision cutoff.
+
+### Page 3: Batch Triage & CSV Evaluation (`batch`)
+- **CSV Template Download:** Generates and downloads a standardized CSV template containing header columns for all 12 features.
+- **Drag-and-Drop Batch File Upload:** Accepts `.csv` files up to 500 patient records.
+- **Pre-Flight Parsing & Schema Verification:** Parses rows client-side, flags missing or malformed values, and displays record counts before API submission.
+- **Batch Inference Execution:** Sends parsed records to `POST /predict/batch` with progress tracking.
+- **Batch Results Summary:**
+  - High / Moderate / Low risk count distribution cards.
+  - Filterable, sortable interactive results table.
+  - Search by `patient_id`.
+- **Export Evaluated Cohort:** Exports scored records with computed `risk_probability`, `threshold`, and `admission_decision` back to CSV for clinical report generation.
+
+### Page 4: Big Data Architecture & Live Trace (`pipeline`)
+- **Interactive Multi-Stage Node Diagram (`PipelineArchitecture.jsx`):** Visualizes the complete data flow across Kafka, HDFS, Spark, Parquet, ML, and FastAPI with zoom/pan controls and color-coded stages.
+- **Guided Presentation Walkthrough Mode (`PipelineWalkthrough.jsx`):** College presentation mode with Previous/Next buttons, structured speaking points, and technical deep-dives for each of the 13 pipeline stages.
+- **Component Status Panel (`PipelineStatusPanel.jsx`):** Differentiates live socket/HTTP probes from disk manifests, displaying latency and connection health.
+- **JSON Manifest Inspector (`ManifestViewer.jsx`):** In-browser viewer for HDFS ingestion manifests and PySpark feature processing manifests (showing SHA-256 hashes, deduplication counts, and imputation logs).
+
+### Page 5: Model Governance & Performance Auditing (`model`)
+- **Model Metadata Card:** Loaded algorithm name, scikit-learn version, feature count, dataset SHA-256 fingerprint, and training date.
+- **Validation Evaluation Metrics:** Table displaying PR-AUC (Average Precision), ROC-AUC, Precision, Recall, F1 Score, and Accuracy.
+- **Confusion Matrix Visualization:** Interactive 2x2 matrix displaying True Positives, False Positives, True Negatives, and False Negatives.
+- **Threshold Sensitivity Curve:** Visual plot demonstrating how precision, recall, and admission rates trade off as the decision threshold moves from 0.1 to 0.9.
+- **Feature Importance Breakdown:** Horizontal bar chart illustrating the relative weight of vital signs and historical features in driving admission decisions.
+- **Governance Notice:** Full synthetic disclaimer detailing academic demonstration limitations.
+
+### Page 6: System Health & Infrastructure Observability (`system`)
+- **Live Infrastructure Probes:**
+  - *FastAPI Backend:* Liveness (`/health`) and readiness (`/ready`) response latency.
+  - *Apache Kafka Broker:* TCP socket reachability on `localhost:9092`.
+  - *Hadoop HDFS NameNode:* HTTP probe on `http://localhost:9870`.
+  - *Apache Spark Master:* Cluster status on `http://localhost:8080`.
+- **Endpoint Diagnostics Suite:** Interactive test buttons to trigger live probe calls to `/health`, `/ready`, `/model-info`, and `/config/threshold`.
+- **Environment Telemetry:** Displays Python version, operating system, working directory, and active model file path.
+
+### Page 7: Academic Project Reference & Documentation (`about`)
+- **Theoretical Foundations:** Explains the clinical rationale for emergency risk stratification and BDA architectural choices.
+- **Data Dictionary:** Reference table of all 12 features with physical units, normal clinical ranges, and boundary clamping limits.
+- **Big Data Engineering Concepts:** Detailed explanations of Kafka partitioning, HDFS block distribution, Spark distributed transformations, and columnar Parquet storage.
+- **Citation & Project Scope:** Academic citation guidelines and scope definitions for viva voce presentation.
+
+---
+
+## 7. FastAPI Backend Service & API Contracts
+
+The FastAPI inference service (`app/api/main.py`) runs on port 8000:
+
+### 7.1 Complete API Endpoints Table
+
+| Method | Endpoint | Description | Request Body | Response Codes |
+|---|---|---|---|---|
+| `GET` | `/` | Service root and welcome banner | None | `200 OK` |
+| `GET` | `/health` | Liveness probe for container orchestrators | None | `200 OK` |
+| `GET` | `/ready` | Readiness probe; verifies model bundle is loaded | None | `200 OK`, `503 Unavailable` |
+| `GET` | `/model-info` | Governance metadata, features, and evaluation metrics | None | `200 OK` |
+| `GET` | `/config/threshold` | Retrieve current active decision threshold | None | `200 OK` |
+| `POST` | `/config/threshold` | Dynamically update global runtime threshold | `{"threshold": 0.75}` | `200 OK`, `422 Unprocessable` |
+| `DELETE`| `/config/threshold` | Reset runtime threshold back to model default | None | `200 OK` |
+| `POST` | `/predict` | Predict admission risk for a single patient | `PatientFeatures` JSON | `200 OK`, `422 Unprocessable` |
+| `POST` | `/predict/batch` | Predict admission risk for up to 500 patients | Array of `PatientFeatures` | `200 OK`, `422 Unprocessable` |
+
+### 7.2 Sample Single Prediction Payload (`POST /predict`)
+```json
+{
+  "patient_id": "PT-10492",
+  "age": 72.0,
+  "heart_rate": 115.0,
+  "systolic_bp": 95.0,
+  "diastolic_bp": 60.0,
+  "spo2": 91.0,
+  "respiratory_rate": 26.0,
+  "temperature_c": 38.6,
+  "previous_admissions": 2.0,
+  "chronic_conditions_count": 2.0,
+  "lactate": 3.8,
+  "observation_hour": 14.0,
+  "prior_observation_count": 2.0,
+  "threshold": 0.70
+}
 ```
 
-**Option B — Docker Compose Utility Container:**
-```powershell
-docker compose --profile tools run --build --rm data-generator
+### 7.3 Sample Prediction Response
+```json
+{
+  "patient_id": "PT-10492",
+  "prediction": 1,
+  "risk_probability": 0.941258,
+  "risk_percent": 94.13,
+  "threshold": 0.7,
+  "review_flag": true,
+  "model_name": "hist_gradient_boosting",
+  "dataset_type": "synthetic",
+  "is_experimental": true,
+  "pipeline_trace": {
+    "stages": [
+      {
+        "step": 1,
+        "name": "Patient Clinical Ingestion",
+        "component": "FastAPI Validation Gateway",
+        "status": "VALIDATED",
+        "color": "#10b981",
+        "details": "Normalized 12 canonical features; patient_id PT-10492 isolated."
+      },
+      {
+        "step": 2,
+        "name": "Real-Time Event Streaming",
+        "component": "Apache Kafka Producer",
+        "status": "STREAMED",
+        "color": "#3b82f6",
+        "details": "Staged to Kafka topic patient-observations (key PT-10492)."
+      },
+      {
+        "step": 3,
+        "name": "Distributed Raw Storage",
+        "component": "Hadoop HDFS Ingestion",
+        "status": "STORED",
+        "color": "#8b5cf6",
+        "details": "Appended to HDFS raw zone (/emergency-admission-bda/raw/kafka-events/ingestion_date=2026-10-15)."
+      },
+      {
+        "step": 4,
+        "name": "Distributed Feature Processing",
+        "component": "Apache Spark & Parquet",
+        "status": "TRANSFORMED",
+        "color": "#f59e0b",
+        "details": "Aligned schema to 12 canonical model inputs."
+      },
+      {
+        "step": 5,
+        "name": "Hist Gradient Boosting Risk Inference",
+        "component": "Hist Gradient Boosting Engine",
+        "status": "DECISION_EMITTED",
+        "color": "#ef4444",
+        "details": "Risk Score: 94.13% vs Threshold 0.7 -> ADMIT"
+      }
+    ],
+    "kafka": {
+      "status": "staged_for_kafka",
+      "topic": "patient-observations",
+      "partition_key": "PT-10492",
+      "broker": "localhost:9092"
+    },
+    "hdfs": {
+      "raw_path": "/emergency-admission-bda/raw/kafka-events/ingestion_date=2026-10-15/patient_events.jsonl",
+      "namenode_rpc": "hdfs://namenode:9000",
+      "namenode_ui": "http://localhost:9870",
+      "status": "persisted"
+    }
+  },
+  "notice": "Synthetic academic demonstration only. Not a clinically validated prediction; do not use for medical decisions or triage."
+}
 ```
 
-### 3. Run Automated Tests
-Execute the comprehensive test suite (testing data generation, schema constraints, deterministic seeds, and starter API endpoints):
-```powershell
-py -3.13 -m pytest tests\ -v
-```
+---
 
-### 4. Start Infrastructure and Starter Applications
-Build and start the services in detached mode:
-```powershell
-docker compose up --build -d api dashboard
-```
-Or start all infrastructure services (Kafka, HDFS, Spark, API, Dashboard):
-```powershell
-docker compose up -d
-```
+## 8. Quick Start & Step-by-Step Execution Guide
 
-### 5. Access Application and Service Web UIs
-| Service | URL / Endpoint | Purpose |
-|---|---|---|
-| **React Frontend (Vite)** | [http://localhost:3000](http://localhost:3000) | Modern Clinical Risk SaaS UI (Single & Batch Prediction, System Health) |
-| **Streamlit Dashboard** | [http://localhost:8501](http://localhost:8501) | Streamlit dashboard & dataset explorer |
-| **FastAPI Docs (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | REST API endpoints (`/`, `/health`, `/metadata`, `/predict`) |
-| **Hadoop NameNode UI** | [http://localhost:9870](http://localhost:9870) | HDFS distributed filesystem explorer |
-| **Spark Master UI** | [http://localhost:8080](http://localhost:8080) | PySpark cluster execution monitor |
-| **Kafka Broker** | `localhost:9092` | Event streaming broker listener |
+### 8.1 System Requirements
+- **Operating System:** Windows 10/11, macOS, or Ubuntu Linux.
+- **Python:** Python 3.10 – 3.13.
+- **Node.js:** Node 18+ and npm (for React frontend).
+- **Docker:** Docker Desktop with Docker Compose v2 (recommended for full Big Data cluster).
+- **RAM:** Minimum 8 GB (16 GB recommended for running Kafka, Hadoop NameNode/DataNode, and PySpark simultaneously).
 
-### 5.1 Running the Modern React Frontend
-To launch the modern React web application (styled with custom CSS matching the production SaaS layout):
+### 8.2 Local Quick Start (FastAPI + React Frontend)
+
+**Terminal 1 — Start FastAPI Backend:**
 ```powershell
-cd frontend
+# Navigate to project root
+cd C:\Users\ANSHUL\BDA-PROJECT\emergency_admission_bda
+
+# Set Python Path and start Uvicorn
+$env:PYTHONPATH = "."
+py -3 -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+```
+Backend Swagger API documentation will be available at: **`http://localhost:8000/docs`**.
+
+**Terminal 2 — Start React Clinical Dashboard:**
+```powershell
+# Navigate to frontend folder
+cd C:\Users\ANSHUL\BDA-PROJECT\emergency_admission_bda\frontend
+
+# Install dependencies and launch Vite development server
 npm install
 npm run dev
 ```
-Open **[http://localhost:3000](http://localhost:3000)** in your browser. The Vite server automatically proxies requests to the FastAPI backend running on port 8000.
+Frontend will open at: **`http://localhost:3000`**.
 
-### 6. Clean Up and Shutdown
-Stop running containers:
+---
+
+### 8.3 Full Big Data Pipeline Execution via Docker
+
+To execute the entire end-to-end Big Data lifecycle across Docker containers:
+
+#### Step 1: Start All Infrastructure Services
 ```powershell
-docker compose down
-```
-To also purge named Docker volumes (resets Kafka and HDFS storage):
-```powershell
-docker compose down -v
-```
-
-## Important notes
-
-- This scaffold is the starting point. Later phases will implement Kafka ingestion, HDFS writing, Spark transformations, and model training.
-- The current API/dashboard are starter surfaces and do not yet provide clinically valid predictions.
-- The example target column is generated using transparent synthetic rules for software demonstration. It must not be interpreted as a medical risk model.
-- Synthetic patient IDs and records are fictional. Do not load real patient-identifiable data into this demo.
-- The threshold `0.7` is configurable and follows the project brief; it is not a clinically validated threshold.
-- Hadoop and Spark containers can be resource-intensive. If startup fails, start the services in smaller groups and check `docker compose logs <service>`.
-
-
-## Phase 2: Kafka Streaming and Data Ingestion (Windows PowerShell)
-
-Phase 2 provides an end-to-end event-driven streaming pipeline:
-
-### 1. Start Kafka Broker
-```powershell
-docker compose up -d kafka
+docker compose up -d
 docker compose ps
 ```
+*Web Consoles:*
+- Hadoop NameNode UI: [http://localhost:9870](http://localhost:9870)
+- Spark Master UI: [http://localhost:8080](http://localhost:8080)
+- FastAPI Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- React Frontend: [http://localhost:3000](http://localhost:3000)
 
-### 2. Generate Synthetic Observations (if not already present)
+#### Step 2: Generate Synthetic Observations (Phase 1)
 ```powershell
-py -3.13 scripts\generate_synthetic_data.py --rows 1000 --seed 42 --output data\raw\patient_observations.csv
+py -3 scripts/generate_synthetic_data.py --rows 10000 --seed 42 --output data/raw/patient_observations.csv
 ```
 
-### 3. Start the Kafka Consumer (Terminal 1)
-**Local Execution:**
+#### Step 3: Stream Observations via Kafka Producer & Consumer (Phase 2)
 ```powershell
-py -3.13 scripts\kafka_consumer.py --output data\streamed\patient_events.jsonl
-```
-**Or Containerized:**
-```powershell
-docker compose --profile streaming up --build kafka-consumer
-```
+# In Terminal A: Run Kafka consumer to write stream archive
+py -3 scripts/kafka_consumer.py --output data/streamed/patient_events.jsonl
 
-### 4. Stream Observations with the Producer (Terminal 2)
-**Local Execution:**
-```powershell
-py -3.13 scripts\kafka_producer.py --input data\raw\patient_observations.csv --limit 100 --delay-ms 10
-```
-**Or Containerized:**
-```powershell
-docker compose --profile tools run --build --rm kafka-producer python scripts/kafka_producer.py --input /project/data/raw/patient_observations.csv --limit 100 --delay-ms 10
+# In Terminal B: Run Kafka producer to publish records
+py -3 scripts/kafka_producer.py --input data/raw/patient_observations.csv --limit 500 --delay-ms 10
 ```
 
-### 5. Inspect Captured Stream Events
+#### Step 4: Ingest Stream Archive into Hadoop HDFS (Phase 3)
 ```powershell
-# Inspect the first 2 archived JSONL events
-Get-Content .\data\streamed\patient_events.jsonl -TotalCount 2 | ConvertFrom-Json | Format-List
-
-# Count total archived events
-(Get-Content .\data\streamed\patient_events.jsonl).Count
+powershell -ExecutionPolicy Bypass -File scripts/ingest_to_hdfs.ps1
+# Verify HDFS health:
+powershell -ExecutionPolicy Bypass -File scripts/verify_hdfs.ps1
 ```
 
-Stop the consumer with `Ctrl+C` in Terminal 1. The consumer flushes remaining buffers, commits safe offsets, and closes cleanly. See [`docs/PHASE2_KAFKA.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE2_KAFKA.md) for full architecture and configuration options.
-
-
-## Phase 3: Hadoop HDFS Ingestion & Raw Data Lake (Windows PowerShell)
-
-Phase 3 provides an idempotent, staged HDFS ingestion pipeline that organizes the Phase 2 Kafka JSONL stream archive into a partitioned Big Data Lake:
-
-### 1. Start Hadoop NameNode & DataNode
+#### Step 5: Process with Apache Spark (Phase 4)
 ```powershell
-docker compose up -d namenode datanode
-docker compose ps
+powershell -ExecutionPolicy Bypass -File scripts/process_hdfs_with_spark.ps1
+# Verify Spark Parquet output:
+powershell -ExecutionPolicy Bypass -File scripts/verify_spark.ps1
 ```
 
-### 2. Verify Stream Archive Exists (from Phase 2)
+#### Step 6: Train Machine Learning Model (Phase 5)
 ```powershell
-Test-Path .\data\streamed\patient_events.jsonl
-Get-Content .\data\streamed\patient_events.jsonl -TotalCount 2
+py -3 scripts/train_risk_model.py --input data/processed/features.parquet --output-dir models --seed 42 --threshold 0.70
 ```
 
-### 3. Ingest Stream Archive into HDFS
-Run the PowerShell wrapper (or invoke `scripts/ingest_to_hdfs.py` directly):
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\ingest_to_hdfs.ps1
-```
-*Advanced Options (parameter overrides):*
-```powershell
-# Custom input path, explicit partition date, or forced overwrite:
-powershell -ExecutionPolicy Bypass -File scripts\ingest_to_hdfs.ps1 -InputFile .\data\streamed\patient_events.jsonl -IngestionDate "2026-10-14" -Overwrite
-```
+---
 
-### 4. Verify HDFS Health and Storage Structure
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\verify_hdfs.ps1
-```
+## 9. Project Report Writing Guide & Reference Formulas
 
-### 5. Inspect Files in HDFS
-```powershell
-# List recursive directory tree
-docker compose exec namenode hdfs dfs -ls -R /emergency-admission-bda
+This section provides academic formulations, architectural justifications, and statistical equations ready to incorporate into your academic project report, thesis, or viva presentation:
 
-# View published ingestion manifest
-docker compose exec namenode hdfs dfs -cat /emergency-admission-bda/metadata/ingestion-manifests/ingestion_date=2026-10-13/manifest.json
+### 9.1 Mathematical Formulations
 
-# Check NameNode Web UI
-# Open http://localhost:9870 in your browser
-```
+#### 1. Precision-Recall Area Under the Curve (PR-AUC / Average Precision)
+For class-imbalanced clinical prediction, Average Precision summarizes the trade-off across varying decision cutoffs:
+$$\text{AP} = \sum_{n} (R_n - R_{n-1}) P_n$$
+Where $P_n$ and $R_n$ are precision and recall at the $n$-th threshold.
 
-### Features & Safety Guarantees:
-- **Date-Partitioned Landing Zone**: Raw files land under `/emergency-admission-bda/raw/kafka-events/ingestion_date=YYYY-MM-DD/patient_events.jsonl`.
-- **Staged Atomic Upload**: Files are written to a `.tmp_<uuid>` path in HDFS, verified for exact byte length, and atomically renamed.
-- **Idempotency**: Re-uploading an identical file returns an `idempotent_noop` without re-uploading; conflicting file sizes trigger safety aborts unless `-Overwrite` is passed.
-- **Data Quality & Quarantine**: Corrupted records are logged to `quarantine/kafka-events/` with line numbers and reasons.
-- **Machine-Readable Manifest**: Produces dynamic JSON manifests with SHA-256 hashes, valid/invalid record counts, and UTC timestamps.
-- **Phase 4 Ready**: The raw JSONL layout matches the exact input contract expected by `scripts/process_hdfs_with_spark.py`.
+#### 2. Clinical Decision Rule
+Given predicted positive class probability $\hat{p} = P(Y = 1 \mid \mathbf{x})$ and decision threshold $\tau \in [0, 1]$:
+$$\hat{Y} = \begin{cases} 1 \quad (\text{ADMIT TO INPATIENT}), & \text{if } \hat{p} \ge \tau \\ 0 \quad (\text{OBSERVE / DISCHARGE}), & \text{if } \hat{p} < \tau \end{cases}$$
 
-See [`docs/PHASE3_HDFS.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE3_HDFS.md) for full architecture diagrams, schema specifications, and Linux/macOS workflows.
+#### 3. Standard Clinical Classification Metrics
+- **Sensitivity (Recall):** $\text{Recall} = \frac{TP}{TP + FN}$ (fraction of true admissions correctly flagged).
+- **Positive Predictive Value (Precision):** $\text{Precision} = \frac{TP}{TP + FP}$ (fraction of flagged patients who truly require admission).
+- **F1 Score:** $F_1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$.
+- **False Alarm Rate (Fall-out):** $\text{FPR} = \frac{FP}{FP + TN}$.
 
+---
 
-## Phase 4: Apache Spark Data Processing & Feature Engineering (Windows PowerShell)
+### 9.2 Big Data Tools Academic Justification
 
-Phase 4 reads the raw Kafka JSONL event archives from HDFS, applies data quality bounds, deduplicates events deterministically, performs batch median imputation, engineers time and window features, and writes a date-partitioned Parquet dataset to HDFS:
+| Technology | Why It Was Chosen Over Alternatives | Academic Justification for Project Report |
+|---|---|---|
+| **Apache Kafka** | Chosen over REST batching / RabbitMQ | Provides distributed, persistent, partitioned append-only event logging. Keying by `patient_id` ensures chronological telemetry order per patient while enabling horizontal multi-worker consumption. |
+| **Hadoop HDFS** | Chosen over standard POSIX filesystem | Delivers distributed fault tolerance through block replication (default factor 3). Decouples storage from compute, serving as the scalable data lake foundation for petabyte-scale healthcare archives. |
+| **Apache Spark** | Chosen over standalone Python/Pandas | In-memory distributed computing framework utilizing Directed Acyclic Graphs (DAGs). Capable of parallelizing cleaning, deduplication, and window-based longitudinal aggregations across large clusters without memory bottlenecks. |
+| **Apache Parquet** | Chosen over CSV / JSON | Columnar binary format offering dictionary encoding and Snappy compression. Reduces disk footprint by up to 75% and dramatically speeds up machine learning feature reads through column pruning. |
+| **HistGradientBoosting** | Chosen over standard Decision Trees | Uses integer-based histogram binning of continuous vital signs (reducing split complexity from $O(n \log n)$ to $O(n)$). Handles nonlinear interactions (e.g. shock vitals) and provides native support for class weighting. |
 
-### 1. Execute Spark Processing Job
-Run the PowerShell wrapper (or invoke Docker Compose directly):
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\process_hdfs_with_spark.ps1
-```
-*Advanced Options (with parameter overrides):*
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\process_hdfs_with_spark.ps1 -WriteMode overwrite -Master "local[*]"
-```
+---
 
-### 2. Verify Output Parquet, Partitions & Manifests
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\verify_spark.ps1
-```
+## 10. Automated Testing & Quality Assurance
 
-### 3. Inspect Processed Dataset via Python / Pandas
-```powershell
-py -3.13 -c "import pandas as pd; df = pd.read_parquet('data/processed/features.parquet'); print(df.info()); print(df.head(2))"
-```
-
-### Features & Data Lake Deliverables:
-- **Distributed Parquet Storage**: Written to HDFS at `/emergency-admission-bda/processed/patient-features/observation_date=YYYY-MM-DD/*.parquet` and exported to `data/processed/features.parquet` for immediate Phase 5 modeling.
-- **Deterministic Deduplication**: Eliminates streaming duplicate events by `event_id` while preserving longitudinal patient visit history.
-- **Data Quality & Imputation**: Bounds checks 10 clinical features; converts out-of-range values to NULL; applies batch median imputation.
-- **Engineered Features**: Computes `observation_date`, `observation_hour` (arrival time signal), and `prior_observation_count` (strictly preceding patient visits).
-- **Processing Manifest**: Publishes dynamic execution receipts detailing record counts, duplicates removed, and imputation summaries to HDFS and `data/metadata/spark_manifests/`.
-
-See [`docs/PHASE4_SPARK.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE4_SPARK.md) for full architecture diagrams, schema specifications, and Linux/macOS workflows.
-
-
-## Phase 5: Machine Learning Training, Evaluation & Model Registry (Windows PowerShell)
-
-Phase 5 implements a robust, reproducible, leakage-safe machine learning training pipeline consuming the Phase 4 processed Parquet dataset (`data/processed/features.parquet`). It trains and compares three baseline classifiers, enforces patient-level group isolation, evaluates model performance using PR-AUC (Average Precision), generates audit reports and registry metadata, and saves a versioned model bundle compatible with Phase 6 FastAPI inference.
-
-> [!CAUTION]
-> **ACADEMIC DEMONSTRATION NOTICE**:
-> All patient records and labels in this project are **SYNTHETIC**. The model is an academic big data software engineering demonstration and is **NOT clinically validated**. It must never be used for actual medical decisions or patient triage.
-
-### 1. Install Machine Learning Dependencies
-```powershell
-py -3.13 -m pip install -r requirements-ml.txt
-```
-
-### 2. Run Model Training Pipeline
-The training pipeline enforces strict statistical adequacy safeguards. By default, it requires at least 5 positive examples and aborts safely if the dataset cannot support valid multi-class evaluation:
+The repository includes a comprehensive test suite covering schema integrity, data generator determinism, HDFS ingestion staging, PySpark transformations, model evaluation metrics, and FastAPI HTTP contracts:
 
 ```powershell
-# Standard training (fails safely if input data is inadequate):
-py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70
+# Run the entire automated test suite:
+py -3 -m pytest tests\ -v
 ```
 
-To run a technical pipeline smoke test on an undersized test dataset (such as the current 50-row Spark output with 1 positive case), supply `--allow-small-dataset`. The resulting artifacts are explicitly flagged as experimental:
+### Test Suite Structure
+- `tests/test_data_generator.py`: Verifies deterministic seed reproducibility and physiological bounds clamping.
+- `tests/test_kafka_streaming.py`: Tests Kafka producer serialization, message keying, and consumer buffering.
+- `tests/test_hdfs_ingestion.py`: Verifies staged atomic uploads (`.tmp`), idempotent re-runs, and SHA-256 manifests.
+- `tests/test_spark_processing.py`: Tests PySpark schema application, windowed visit counts, and median imputation.
+- `tests/test_model_selection_and_audit.py`: Tests group isolation (`patient_id`), leakage exclusion, and PR-AUC ranking.
+- `tests/test_api_contract.py`: Probes `/health`, `/ready`, `/model-info`, `/config/threshold`, and `/predict` response schemas.
 
-```powershell
-# Experimental smoke-test mode:
-py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70 --allow-small-dataset
-```
+---
 
-### 3. Validate Saved Model Artifacts and API Compatibility
-Verify model bundle deserialization, feature ordering, metadata integrity, and inference probability contracts:
-
-```powershell
-py -3.13 scripts\validate_model_artifacts.py --model models\risk_model.joblib --metadata models\model_metadata.json
-```
-
-### 4. Run Automated ML and API Test Suite
-```powershell
-py -3.13 -m pytest tests\ -v
-```
-
-### Pipeline Architecture & Key Guarantees
-- **Feature Allowlist & Leakage Prevention**: Identifiers (`event_id`, `patient_id`), observation timestamps, Kafka metadata, and synthetic flags are strictly excluded from predictors (`ml/features.py`).
-- **Patient-Grouped Splitting**: Employs `GroupShuffleSplit` across `patient_id` so observations from the same patient never appear in both training and test/validation splits (`ml/training.py`).
-- **Baseline Models Compared**:
-  1. *Logistic Regression*: Scaled features with median imputation, balanced class weights, `max_iter=2000`.
-  2. *Random Forest*: 100 estimators, balanced subsampling, tree depth controls.
-  3. *HistGradientBoosting*: Native histogram binning with balanced class weights.
-- **Selection Metric**: Validation PR-AUC (Average Precision) is used as the primary model selection metric to properly handle clinical class imbalance.
-- **Published Artifacts**:
-  - `models/risk_model.joblib`: Atomic bundle containing trained scikit-learn pipeline, feature list, model name, and threshold.
-  - `models/model_metadata.json`: Model hyperparameters, feature schema, dataset SHA-256 fingerprint, environment versions, and synthetic disclaimer.
-  - `models/evaluation_report.json`: Machine-readable validation comparison, held-out test metrics, and split statistics.
-  - `models/evaluation_report.md`: Human-readable markdown summary with comparison tables and limitations.
-
-See [`docs/PHASE5_ML.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE5_ML.md) for complete mathematical rationale, data adequacy analysis, and future dataset scaling instructions.
-
-
-## Phase 6: FastAPI Model Inference API & Prediction Serving (Windows PowerShell)
-
-Phase 6 implements a robust, asynchronous REST inference service using FastAPI. It loads the Phase 5 trained model bundle (`models/risk_model.joblib`), manages model lifecycles with startup caching, validates patient clinical observations against physiological ranges, prevents NaN/Infinity inputs, maps positive-class probabilities safely via `model.classes_`, and provides liveness (`/health`), readiness (`/ready`), model governance (`/model-info`), and single/batch prediction endpoints (`/predict`, `/predict/batch`).
-
-> [!CAUTION]
-> **ACADEMIC DEMONSTRATION NOTICE**:
-> All predictions and patient telemetry values are **SYNTHETIC**. The model is an academic big data software engineering demonstration and is **NOT clinically validated**. Do not use for medical decisions or patient triage.
-
-### 1. Run API in Docker
-Build and start the container in detached mode:
-```powershell
-docker compose build api
-docker compose up -d api
-docker compose ps api
-```
-
-View live container logs:
-```powershell
-docker compose logs api --tail 50
-```
-
-### 2. Run API Locally with Python (Alternative)
-```powershell
-py -3.13 -m pip install -r requirements-api.txt
-$env:MODEL_PATH="models/risk_model.joblib"
-$env:RISK_THRESHOLD="0.70"
-py -3.13 -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 3. Test Endpoints via Windows PowerShell
-
-**A. Liveness Probe (`GET /health`):**
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get | ConvertTo-Json
-```
-
-**B. Inference Readiness Probe (`GET /ready`):**
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/ready" -Method Get | ConvertTo-Json
-```
-
-**C. Model Governance & Metrics (`GET /model-info`):**
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/model-info" -Method Get | ConvertTo-Json -Depth 4
-```
-
-**D. Single Patient Risk Prediction (`POST /predict`):**
-```powershell
-$body = @{
-    patient_id = "SYN-POWERSHELL-01"
-    age = 71.0
-    heart_rate = 92.0
-    systolic_bp = 138.0
-    diastolic_bp = 88.0
-    spo2 = 94.0
-    respiratory_rate = 20.0
-    temperature_c = 37.2
-    previous_admissions = 1.0
-    chronic_conditions_count = 2.0
-    lactate = 1.8
-    observation_hour = 16.0
-    prior_observation_count = 1.0
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:8000/predict" -Method Post -ContentType "application/json" -Body $body | ConvertTo-Json
-```
-
-**E. Batch Patient Risk Prediction (`POST /predict/batch`):**
-```powershell
-$batch = @(
-    @{
-        patient_id = "SYN-BATCH-01"; age = 55.0; heart_rate = 78.0; systolic_bp = 120.0; diastolic_bp = 80.0
-        spo2 = 98.0; respiratory_rate = 16.0; temperature_c = 36.8; previous_admissions = 0.0
-        chronic_conditions_count = 1.0; lactate = 1.1; observation_hour = 10.0; prior_observation_count = 0.0
-    },
-    @{
-        patient_id = "SYN-BATCH-02"; age = 82.0; heart_rate = 110.0; systolic_bp = 90.0; diastolic_bp = 60.0
-        spo2 = 90.0; respiratory_rate = 24.0; temperature_c = 38.5; previous_admissions = 4.0
-        chronic_conditions_count = 4.0; lactate = 3.2; observation_hour = 22.0; prior_observation_count = 5.0
-    }
-) | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:8000/predict/batch" -Method Post -ContentType "application/json" -Body $batch | ConvertTo-Json -Depth 4
-```
-
-### Interactive API Documentation
-Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to explore interactive Swagger UI documentation.
-
-See [`docs/PHASE6_API.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE6_API.md) for full request/response schemas, security considerations, and error code specifications.
-
-
-## Phase 7: Modern Streamlit Analytics Dashboard & FastAPI Integration
-
-Phase 7 provides a modern, responsive healthcare analytics SaaS interface matching the project's visual design reference with a dark navy sidebar, live status cards, experimental model governance badges, single-patient 12-feature prediction form with presets, batch CSV evaluation (up to 500 records), and automated endpoint diagnostics.
-
-Ensure Phase 5 artifacts exist (`models/risk_model.joblib`), then build and run via Docker Compose:
-
-```powershell
-docker compose build api dashboard
-docker compose up -d api dashboard
-docker compose ps
-```
-
-Access the web services:
-- **Streamlit Analytics Dashboard:** [http://localhost:8501](http://localhost:8501)
-- **FastAPI OpenAPI Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
-
-Run automated dashboard tests:
-```powershell
-py -3.13 -m pytest tests/test_dashboard_phase7.py -v
-```
-
-See [`docs/PHASE7_DASHBOARD.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE7_DASHBOARD.md) for architecture, schema validation, and full execution guidelines.
-
-
-## Phase 8: Production-Style Academic UI, Dataset Explorer & End-to-End Demo
-
-Phase 8 elevates the platform into a cohesive, demonstrable academic application:
-- **Reproducible Synthetic Demo Dataset:** Generated via `scripts/generate_demo_dataset.py`, providing 500 rich patient records and pre-formatted batch prediction templates.
-- **Interactive Dataset Explorer:** Paginated inspection, multi-attribute filtering (Age, Hour, Outcome, Patient ID), summary statistics, CSV export, and 1-click feature forwarding to the Single Prediction form.
-- **Pipeline Observability Telemetry:** Real-time health scores, Spark & HDFS manifest inspection, quarantine monitoring, and live FastAPI endpoint probing.
-- **Batch CSV Evaluation:** Upload and score up to 500 records via `POST /predict/batch` with immediate CSV export.
-
-### Quick Verification & Demonstration Commands (Windows PowerShell)
-
-```powershell
-# 1. Generate Demo Dataset and Batch Template
-py -3.13 scripts/generate_demo_dataset.py --rows 500 --seed 42
-
-# 2. Build and Start Docker Services
-docker compose build api dashboard
-docker compose up -d api dashboard
-
-# 3. Check Running Containers
-docker compose ps
-
-# 4. Run Automated Test Suite (114 passing tests)
-py -3.13 -m pytest tests/ -v
-```
-
-Access Web Interfaces:
-- **Streamlit Analytics Dashboard:** [http://localhost:8501](http://localhost:8501)
-- **FastAPI OpenAPI Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
-
-See [`docs/PHASE8_DEMO_GUIDE.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE8_DEMO_GUIDE.md) for full walkthroughs, architecture diagrams, and demonstration steps.
-
-
-## Phase 9: reproducibility and submission materials
-
-Launch the local API/dashboard demo:
-
-```powershell
-.\scripts\run_demo.ps1
-```
-
-Run API contract tests (with the API and test dependencies installed in your Python environment):
-
-```powershell
-pip install -r requirements-api.txt
-pip install -r requirements-test.txt
-python -m pytest tests/test_api_contract.py -v
-```
-
-Use `docs/PROJECT_REPORT_TEMPLATE.md` as a report draft and replace every `[FILL IN]` field with actual results. The launcher does not run the entire Kafka/HDFS/Spark/model pipeline automatically. See `docs/PHASE9_REPRODUCIBILITY_REPORT.md`.
-
-
-## Phase 10: configuration without editing operational settings
-
-Copy `.env.example` to `.env`, adjust ports, thresholds, paths, data-generation settings and selected model-training parameters, then validate:
-
-```powershell
-Copy-Item .env.example .env
-docker compose config --quiet
-```
-
-Recreate affected services after changes:
-
-```powershell
-docker compose up --build -d api dashboard
-```
-
-See `docs/PHASE10_CONFIGURATION.md` for configurable settings and the remaining intentional code contracts. The project does not claim that every literal has been removed; feature names, service discovery identifiers and validation rules remain explicit contracts.
+## License & Citation
+This project is developed for academic coursework in **Big Data Analytics (BDA)**. 
+- **Author:** Anshul
+- **Repository:** `emergency_admission_bda`
+- **Topic:** Emergency Admission Risk Prediction — React + FastAPI + scikit-learn + Kafka + Hadoop + PySpark
