@@ -53,8 +53,9 @@ def test_api_metadata():
     assert "risk_threshold" in data
 
 
-def test_predict_without_trained_model():
+def test_predict_without_trained_model(monkeypatch, tmp_path):
     """Verify that prediction endpoint returns HTTP 503 when no model bundle exists."""
+    monkeypatch.setattr("app.api.main.MODEL_PATH", tmp_path / "nonexistent.joblib")
     valid_payload = {
         "patient_id": "SYN000001",
         "age": 65,
@@ -71,7 +72,7 @@ def test_predict_without_trained_model():
         "prior_observation_count": 1,
     }
     response = client.post("/predict", json=valid_payload)
-    # In Phase 1 without a trained model, it should return 503 Service Unavailable
+    # Without a trained model, it should return 503 Service Unavailable
     assert response.status_code == 503
     assert "Trained model not found" in response.json()["detail"]
 

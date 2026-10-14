@@ -1,53 +1,268 @@
-# Phase 5 — Machine Learning Pipeline
+# Phase 5 — Machine Learning Training, Evaluation, Model Registry & Artifact Management
 
-## Objective
-Train and compare Logistic Regression, Random Forest, and HistGradientBoosting models on the cleaned feature dataset. Save the best model and an evaluation report for later API integration.
+> [!CAUTION]
+> **ACADEMIC DEMONSTRATION & SYNTHETIC DATA NOTICE**:
+> All patient records, physiological vital signs, and binary admission labels in this project are **SYNTHETIC**.
+> The machine learning pipelines, artifacts, and evaluation metrics described herein are part of an **academic Big Data Analytics software engineering demonstration**.
+> This model is **NOT clinically validated** and **MUST NEVER be used for actual medical decisions, patient diagnosis, or emergency department triage**.
 
-## Input contract
-The training script expects a local CSV or Parquet file/directory with these columns:
-- `age`, `heart_rate`, `systolic_bp`, `diastolic_bp`, `spo2`
-- `respiratory_rate`, `temperature_c`, `previous_admissions`
-- `chronic_conditions_count`, `lactate`, `observation_hour`, `prior_observation_count`
-- `admission_within_24h` (synthetic binary target)
-- `patient_id` (used to keep patient groups separated across splits, if available)
+---
 
-## Export HDFS Parquet for local training
-The current Docker HDFS/Spark setup is separate from the host Python environment. Copy the Parquet output to a local staging folder using Hadoop's `get` command from the NameNode container, for example:
+## 1. Phase 5 Architecture Overview
 
-```powershell
-New-Item -ItemType Directory -Force .\data\processed | Out-Null
-docker compose exec namenode hdfs dfs -get -f /emergency-admission-bda/processed/patient-features .\data\processed\features.parquet
+Phase 5 establishes a reproducible, leakage-safe, production-structured machine learning training and model registry layer. It consumes the date-partitioned Parquet feature dataset generated in Phase 4 by Apache Spark (`data/processed/features.parquet`), evaluates multiple candidate binary classification architectures, selects the optimal model using validation PR-AUC, and publishes versioned, atomic artifacts consumed by the Phase 6 FastAPI inference microservice.
+
+```
++-------------------------------------------------------------+
+|              Phase 4 Processed Parquet Features             |
+|                (data/processed/features.parquet)            |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|         ml/features.py: Ingestion & Quality Diagnostics      |
+|  - Directory-aware Parquet reader (pandas + pyarrow)        |
+|  - Target checks: binary {0, 1}, non-null, finite           |
+|  - Data adequacy checks (minimum positive class threshold)  |
+|  - Feature allowlisting & strict leakage exclusion          |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|       ml/training.py: Patient-Grouped Stratified Split      |
+|  - GroupShuffleSplit across patient_id                      |
+|  - Guarantees zero patient identity leakage                 |
+|  - Train (60%), Validation (20%), Held-Out Test (20%)       |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|          Three Baseline Scikit-Learn ML Pipelines           |
+|  Model A: Logistic Regression (Scaled + Median Imputer)     |
+|  Model B: Random Forest Classifier (Subsample Balanced)     |
+|  Model C: HistGradientBoosting Classifier (Binned Trees)    |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|        ml/evaluation.py: Model Selection & Reporting        |
+|  - Validation PR-AUC (Average Precision) as primary metric  |
+|  - Single frozen evaluation on unseen held-out test split   |
+|  - Multi-metric reporting (Precision, Recall, F1, ROC, PR)  |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|                 Published Versioned Artifacts               |
+|  - models/risk_model.joblib      (Pipeline bundle)          |
+|  - models/model_metadata.json    (Registry metadata)        |
+|  - models/evaluation_report.json (JSON metrics audit)       |
+|  - models/evaluation_report.md   (Markdown report)          |
++-------------------------------------------------------------+
 ```
 
-If that destination syntax behaves differently in your Docker/PowerShell setup, copy the folder to `/shared-data/processed/features` inside the NameNode and use the mounted `./data` folder. Then use a Parquet reader such as `pyarrow`.
+---
 
-Install the training requirements:
+## 2. Input Data Contract & Schema Specification
+
+The primary training input is located at:
+`data/processed/features.parquet`
+
+This is a directory-partitioned Parquet dataset generated by the Phase 4 Spark job partitioned on `observation_date`.
+
+### Schema Contract
+
+| Column Name | Type | Category | Role in Phase 5 |
+|---|---|---|---|
+| `event_id` | `object` / `string` | Identifier | Excluded from features (audit key) |
+| `patient_id` | `object` / `string` | Identifier | Excluded from features; used for **Group Splitting** |
+| `observation_ts` | `datetime64[ns]` | Timestamp | Excluded from features (leakage prevention) |
+| `observation_date` | `category` / `string` | Partition Key | Excluded from features |
+| `observation_hour` | `int32` / `float64` | Engineered Feature | **Feature Allowlist** (arrival circadian signal) |
+| `age` | `float64` | Physiological | **Feature Allowlist** (clinical range: [18, 100]) |
+| `heart_rate` | `float64` | Physiological | **Feature Allowlist** (clinical range: [25, 240]) |
+| `systolic_bp` | `float64` | Physiological | **Feature Allowlist** (clinical range: [40, 300]) |
+| `diastolic_bp` | `float64` | Physiological | **Feature Allowlist** (clinical range: [20, 200]) |
+| `spo2` | `float64` | Physiological | **Feature Allowlist** (clinical range: [50, 100]) |
+| `respiratory_rate` | `float64` | Physiological | **Feature Allowlist** (clinical range: [3, 80]) |
+| `temperature_c` | `float64` | Physiological | **Feature Allowlist** (clinical range: [30.0, 44.0]) |
+| `previous_admissions` | `float64` | Longitudinal | **Feature Allowlist** (clinical range: [0, 100]) |
+| `chronic_conditions_count` | `float64` | Longitudinal | **Feature Allowlist** (clinical range: [0, 50]) |
+| `lactate` | `float64` | Physiological | **Feature Allowlist** (clinical range: [0.0, 30.0]) |
+| `prior_observation_count` | `int32` / `float64` | Engineered Feature | **Feature Allowlist** (preceding visits signal) |
+| `admission_within_24h` | `int32` | Target | **Supervised Binary Target** {0, 1} |
+| `is_synthetic` | `bool` | Provenance | Excluded from features (provenance check) |
+| `data_origin` | `object` / `string` | Provenance | Excluded from features (provenance check) |
+| `kafka_topic` | `object` / `string` | Ingestion Metadata | Excluded from features |
+| `kafka_partition` | `int32` | Ingestion Metadata | Excluded from features |
+| `kafka_offset` | `int64` | Ingestion Metadata | Excluded from features |
+
+---
+
+## 3. Leakage Prevention Architecture
+
+Data leakage causes models to learn spurious correlations that collapse during real-world inference. Phase 5 strictly prevents three distinct forms of leakage:
+
+1. **Target & Metadata Leakage**:
+   The explicit exclusion list (`EXCLUDED_COLUMNS` in `ml/features.py`) prevents IDs (`event_id`, `patient_id`), ingestion metadata (`kafka_*`), and synthetic markers from ever entering candidate feature matrices.
+2. **Patient Identity Memorization (Group Leakage)**:
+   Patients often have repeated emergency room visits or consecutive telemetry observations. If observations for patient `P123` are randomly split between training and testing, the model memorizes idiosyncratic patient baseline vitals rather than generalizable pathology signals.
+   Phase 5 uses `GroupShuffleSplit` grouped by `patient_id` to ensure that a patient's records reside **exclusively in one split**.
+3. **Temporal Feature Leakage**:
+   The engineered feature `prior_observation_count` computes observations strictly occurring *before* the current observation timestamp, preventing future information from predicting past events.
+
+---
+
+## 4. Dataset Adequacy & Safety Controls
+
+### Statistical Adequacy Problem with the Initial 50-Row Test Dataset
+The Phase 4 test output contains:
+- Total rows: 50
+- Unique patients: 46
+- Target breakdown: **49 zeros (non-admissions) and 1 one (admission)**
+
+A dataset with only 1 positive event **cannot** support a valid 3-way split (Train / Validation / Test):
+- If the single positive is placed in Train, the Validation and Test sets have 0 positives, making PR-AUC and ROC-AUC mathematically undefined.
+- If placed in Validation or Test, the training set has 0 positives, preventing estimators from learning the positive class boundary.
+
+### Fail-Safe Enforcement
+By default, `scripts/train_risk_model.py` requires at least 5 positive examples (`--minimum-positive-examples 5`). When run against an inadequate dataset, it immediately aborts with exit code 2 and outputs an actionable remediation report:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-ml.txt
-pip install pyarrow
+py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70
 ```
 
-Run:
+### Technical Smoke-Test Override (`--allow-small-dataset`)
+For end-to-end CI/CD and software pipeline integration testing, an explicit flag `--allow-small-dataset` permits running the training pipeline on undersized datasets:
+- Prominently logs an `EXPERIMENTAL SMOKE TEST` warning in console and markdown reports.
+- Places the single positive in the training split so estimators fit without crashing.
+- Accurately reports `None` for validation and test PR-AUC / ROC-AUC, explaining why rather than inventing synthetic metrics.
+- Tags all exported model bundles and metadata with `"is_experimental": true`.
 
+---
+
+## 5. Candidate Baseline Model Architectures
+
+All models are constructed using scikit-learn `Pipeline` objects with `ColumnTransformer` preprocessing fitted exclusively on training data:
+
+### Model A: Logistic Regression
+- **Preprocessing**: Median imputation via `SimpleImputer` followed by feature standardization via `StandardScaler`.
+- **Estimator**: `LogisticRegression(max_iter=2000, class_weight='balanced', solver='lbfgs', random_state=42)`
+- **Rationale**: Fast, convex, interpretable baseline providing well-calibrated odds ratios for clinical features.
+
+### Model B: Random Forest Classifier
+- **Preprocessing**: Median imputation via `SimpleImputer`.
+- **Estimator**: `RandomForestClassifier(n_estimators=100, min_samples_leaf=2, class_weight='balanced_subsample', random_state=42, n_jobs=-1)`
+- **Rationale**: Non-linear tree ensemble robust to feature scales and collinear vital signs.
+
+### Model C: HistGradientBoosting Classifier
+- **Preprocessing**: Median imputation via `SimpleImputer`.
+- **Estimator**: `HistGradientBoostingClassifier(max_iter=100, learning_rate=0.08, class_weight='balanced', random_state=42)`
+- **Rationale**: Modern histogram-based gradient boosted decision trees optimized for speed and complex feature interactions.
+
+---
+
+## 6. Model Selection & Evaluation Strategy
+
+1. **Primary Selection Metric: Validation PR-AUC (Average Precision)**:
+   Because emergency admissions exhibit severe class imbalance, ROC-AUC can present an overly optimistic assessment. PR-AUC focuses on the positive minority class and is sensitive to false positives.
+   The no-skill baseline for PR-AUC equals the positive class prevalence $P / (P + N)$.
+2. **Tie-Breaker Metric**: Validation F1-score at the configured threshold (default 0.70).
+3. **Frozen Held-Out Test Evaluation**:
+   The selected model is evaluated **once** on the unseen held-out test partition. The test partition is never used to select models or tune hyperparameters.
+
+---
+
+## 7. Versioned Artifact Contracts
+
+Phase 5 writes four atomic artifacts into `models/`:
+
+### 1. `models/risk_model.joblib`
+Serialized dictionary bundle loaded directly by Phase 6 FastAPI:
+```python
+{
+    "model": <sklearn.pipeline.Pipeline>,
+    "model_name": "logistic_regression",
+    "features": ["age", "heart_rate", ...],
+    "threshold": 0.70,
+    "target": "admission_within_24h",
+    "dataset_type": "synthetic",
+    "is_experimental": True,
+    "not_for_clinical_use": True
+}
+```
+
+### 2. `models/model_metadata.json`
+Machine-readable model governance metadata containing:
+- Artifact version (`1.0.0`)
+- Model class and hyperparameters
+- Input feature schema and order
+- Creation UTC timestamp
+- Training dataset SHA-256 fingerprint
+- Python, OS platform, and scikit-learn environment versions
+- Clinical safety disclaimers
+
+### 3. `models/evaluation_report.json`
+Complete audit trail recording split sizes, target prevalence, validation comparison across all 3 candidates, and final held-out test metrics.
+
+### 4. `models/evaluation_report.md`
+Human-readable Markdown document containing comparison tables, alert boxes, and limitations.
+
+---
+
+## 8. Windows PowerShell Execution Guide
+
+Run all commands from the repository root: `C:\Users\ANSHUL\BDA-PROJECT\emergency_admission_bda`
+
+### Step 1: Install Dependencies
 ```powershell
-python scripts/train_model.py --input data/processed/features.parquet --output-dir models --threshold 0.7
+py -3.13 -m pip install -r requirements-ml.txt
 ```
 
-If your local Parquet reader cannot read the HDFS export, convert the feature output to CSV from a Spark job and point `--input` at the CSV instead. CSV is less efficient, but suitable for this small synthetic academic demo.
+### Step 2: Run Training Pipeline
+```powershell
+# Standard mode (fails safely on inadequate data):
+py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70
 
-## Outputs
-- `models/risk_model.joblib`: selected model bundle and feature order.
-- `models/evaluation_report.json`: split sizes, selected model, validation comparisons and held-out test metrics.
+# Experimental smoke-test mode (for pipeline verification):
+py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70 --allow-small-dataset
+```
 
-## Evaluation
-Reports accuracy, precision, recall, F1, ROC-AUC, average precision/PR-AUC and confusion matrix at the configured threshold. The best model is selected using validation PR-AUC, with F1 as a tie-breaker; test metrics are reported only after selection.
+### Step 3: Validate Model Artifacts & API Compatibility
+```powershell
+py -3.13 scripts\validate_model_artifacts.py --model models\risk_model.joblib --metadata models\model_metadata.json
+```
 
-## Important limitations
-- Synthetic labels are generated by simulation rules and do not represent real clinical outcomes.
-- The 0.7 threshold is a demonstration setting, not a validated clinical cutoff.
-- Do not use the model to diagnose, triage, or treat real people.
-- The current feature table contains observations, not necessarily true prediction-time snapshots. A production-quality experiment needs a precisely defined prediction index time and features strictly available before that time.
-- If multiple observations per patient exist, group-aware splits are used when patient_id is present.
+### Step 4: Run Automated Unit & Component Tests
+```powershell
+py -3.13 -m pytest tests\ -v
+```
+
+---
+
+## 9. Troubleshooting & Common Issues
+
+| Issue / Error | Root Cause | Solution |
+|---|---|---|
+| `DataAdequacyError: Only 1 positive example found...` | The input dataset is too small to split both classes across Train/Val/Test. | Run with `--allow-small-dataset` for smoke testing, or generate a larger dataset (see Section 10). |
+| `FileNotFoundError: data/processed/features.parquet` | Spark Parquet features were not exported or generated. | Run Phase 4 Spark processing job or verify the path. |
+| `ValueError: Target column contains non-binary values` | Corrupted raw data with labels outside {0, 1}. | Inspect upstream data quality; ensure Spark filtering quarantined invalid rows. |
+| `HTTPException 503: Trained model not found` | Phase 6 FastAPI cannot find `models/risk_model.joblib`. | Run Phase 5 training pipeline and verify file exists. |
+
+---
+
+## 10. Path to Production: Scaling Synthetic Data & Real Clinical Research
+
+### Scaling Synthetic Observation Data
+To train a statistically valid model with defensible PR-AUC metrics:
+1. Generate 10,000+ observations:
+   ```powershell
+   py -3.13 scripts\generate_synthetic_data.py --rows 10000 --seed 42 --output data\raw\patient_observations.csv
+   ```
+2. Stream events through Kafka (Phase 2), ingest to HDFS (Phase 3), and execute Spark feature engineering (Phase 4).
+3. Re-run Phase 5 training without `--allow-small-dataset`.
+
+### Legal Clinical Datasets for Future Research
+For legitimate research beyond software engineering demonstrations:
+- **PhysioNet MIMIC-IV / MIMIC-ED**: Real de-identified emergency department clinical data. Requires formal human subjects training (CITI Program) and PhysioNet credentialing.
+- **Never load unapproved or restricted clinical data into public code repositories.**

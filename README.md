@@ -223,19 +223,61 @@ py -3.13 -c "import pandas as pd; df = pd.read_parquet('data/processed/features.
 See [`docs/PHASE4_SPARK.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE4_SPARK.md) for full architecture diagrams, schema specifications, and Linux/macOS workflows.
 
 
-## Phase 5: machine learning
+## Phase 5: Machine Learning Training, Evaluation & Model Registry (Windows PowerShell)
 
-Phase 5 adds a reproducible scikit-learn training script. It compares Logistic Regression, Random Forest and HistGradientBoosting, selects the best using validation PR-AUC (F1 tie-breaker), evaluates once on the held-out test split, and writes a model bundle plus JSON evaluation report.
+Phase 5 implements a robust, reproducible, leakage-safe machine learning training pipeline consuming the Phase 4 processed Parquet dataset (`data/processed/features.parquet`). It trains and compares three baseline classifiers, enforces patient-level group isolation, evaluates model performance using PR-AUC (Average Precision), generates audit reports and registry metadata, and saves a versioned model bundle compatible with Phase 6 FastAPI inference.
 
-1. Export the processed Parquet dataset from HDFS to `data/processed/features.parquet` (instructions in `docs/PHASE5_ML.md`).
-2. Install training dependencies:
-   `pip install -r requirements-ml.txt`
-   `pip install pyarrow`
-3. Train:
-   `python scripts/train_model.py --input data/processed/features.parquet --output-dir models --threshold 0.7`
-4. Review `models/evaluation_report.json` and `models/risk_model.joblib`.
+> [!CAUTION]
+> **ACADEMIC DEMONSTRATION NOTICE**:
+> All patient records and labels in this project are **SYNTHETIC**. The model is an academic big data software engineering demonstration and is **NOT clinically validated**. It must never be used for actual medical decisions or patient triage.
 
-The script uses patient-grouped train/validation/test splits when `patient_id` is present. All data and labels are synthetic, so reported metrics are only a software demonstration and not clinical evidence.
+### 1. Install Machine Learning Dependencies
+```powershell
+py -3.13 -m pip install -r requirements-ml.txt
+```
+
+### 2. Run Model Training Pipeline
+The training pipeline enforces strict statistical adequacy safeguards. By default, it requires at least 5 positive examples and aborts safely if the dataset cannot support valid multi-class evaluation:
+
+```powershell
+# Standard training (fails safely if input data is inadequate):
+py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70
+```
+
+To run a technical pipeline smoke test on an undersized test dataset (such as the current 50-row Spark output with 1 positive case), supply `--allow-small-dataset`. The resulting artifacts are explicitly flagged as experimental:
+
+```powershell
+# Experimental smoke-test mode:
+py -3.13 scripts\train_risk_model.py --input data\processed\features.parquet --output-dir models --seed 42 --threshold 0.70 --allow-small-dataset
+```
+
+### 3. Validate Saved Model Artifacts and API Compatibility
+Verify model bundle deserialization, feature ordering, metadata integrity, and inference probability contracts:
+
+```powershell
+py -3.13 scripts\validate_model_artifacts.py --model models\risk_model.joblib --metadata models\model_metadata.json
+```
+
+### 4. Run Automated ML and API Test Suite
+```powershell
+py -3.13 -m pytest tests\ -v
+```
+
+### Pipeline Architecture & Key Guarantees
+- **Feature Allowlist & Leakage Prevention**: Identifiers (`event_id`, `patient_id`), observation timestamps, Kafka metadata, and synthetic flags are strictly excluded from predictors (`ml/features.py`).
+- **Patient-Grouped Splitting**: Employs `GroupShuffleSplit` across `patient_id` so observations from the same patient never appear in both training and test/validation splits (`ml/training.py`).
+- **Baseline Models Compared**:
+  1. *Logistic Regression*: Scaled features with median imputation, balanced class weights, `max_iter=2000`.
+  2. *Random Forest*: 100 estimators, balanced subsampling, tree depth controls.
+  3. *HistGradientBoosting*: Native histogram binning with balanced class weights.
+- **Selection Metric**: Validation PR-AUC (Average Precision) is used as the primary model selection metric to properly handle clinical class imbalance.
+- **Published Artifacts**:
+  - `models/risk_model.joblib`: Atomic bundle containing trained scikit-learn pipeline, feature list, model name, and threshold.
+  - `models/model_metadata.json`: Model hyperparameters, feature schema, dataset SHA-256 fingerprint, environment versions, and synthetic disclaimer.
+  - `models/evaluation_report.json`: Machine-readable validation comparison, held-out test metrics, and split statistics.
+  - `models/evaluation_report.md`: Human-readable markdown summary with comparison tables and limitations.
+
+See [`docs/PHASE5_ML.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE5_ML.md) for complete mathematical rationale, data adequacy analysis, and future dataset scaling instructions.
 
 
 ## Phase 6: FastAPI model inference
