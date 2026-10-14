@@ -89,6 +89,17 @@ def render_single_prediction() -> None:
         unsafe_allow_html=True,
     )
 
+    # Check for pre-filled patient from Dataset Explorer
+    prefilled = st.session_state.get("prefill_patient")
+    if prefilled:
+        p_col_info, p_col_clear = st.columns([4, 1])
+        with p_col_info:
+            st.info(f"📋 **Prefilled from Dataset Explorer:** Observation record for **{prefilled.get('patient_id')}** loaded into input form.")
+        with p_col_clear:
+            if st.button("✕ Clear Prefill", use_container_width=True):
+                del st.session_state["prefill_patient"]
+                st.rerun()
+
     # Initialize preset selection in session state
     if "single_profile_name" not in st.session_state:
         st.session_state["single_profile_name"] = "Typical / Low Risk Case"
@@ -105,12 +116,16 @@ def render_single_prediction() -> None:
         )
         if selected_profile != st.session_state["single_profile_name"]:
             st.session_state["single_profile_name"] = selected_profile
+            if "prefill_patient" in st.session_state:
+                del st.session_state["prefill_patient"]
             st.rerun()
 
     with p_col2:
         st.write("")
         st.write("")
         if st.button("🎲 Random Synthetic", use_container_width=True):
+            if "prefill_patient" in st.session_state:
+                del st.session_state["prefill_patient"]
             st.session_state["random_pt_id"] = f"SYNTH-{random.randint(1000, 9999)}"
             st.session_state["age"] = random.randint(25, 88)
             st.session_state["heart_rate"] = float(random.randint(60, 130))
@@ -126,7 +141,7 @@ def render_single_prediction() -> None:
             st.session_state["prior_observation_count"] = random.randint(1, 15)
             st.rerun()
 
-    profile_data = PROFILES[st.session_state["single_profile_name"]]
+    profile_data = prefilled if prefilled else PROFILES[st.session_state["single_profile_name"]]
 
     # Two column layout: Input Form (left) vs Prediction Result (right)
     col_form, col_result = st.columns([7, 5], gap="large")

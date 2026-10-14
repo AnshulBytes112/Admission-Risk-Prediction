@@ -13,19 +13,27 @@ import plotly.express as px
 import streamlit as st
 
 from app.dashboard.api_client import api_client
+from app.dashboard.pipeline_inspector import get_pipeline_telemetry
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 PARQUET_PATH = DATA_DIR / "processed" / "features.parquet"
+DEMO_CSV_PATH = DATA_DIR / "demo" / "synthetic_demo_patients.csv"
 CSV_PATH = DATA_DIR / "raw" / "patient_observations.csv"
 
 
 @st.cache_data(ttl=60)
 def load_exploratory_data() -> tuple[pd.DataFrame | None, str]:
-    """Load local processed Parquet or raw CSV data for exploratory analytics."""
+    """Load local processed Parquet, synthetic demo CSV, or raw CSV data for exploratory analytics."""
     if PARQUET_PATH.exists():
         try:
             df = pd.read_parquet(PARQUET_PATH)
-            return df, f"Processed Parquet dataset ({PARQUET_PATH})"
+            return df, f"Processed Spark Parquet dataset ({PARQUET_PATH})"
+        except Exception:
+            pass
+    if DEMO_CSV_PATH.exists():
+        try:
+            df = pd.read_csv(DEMO_CSV_PATH)
+            return df, f"Synthetic Demo Dataset CSV ({DEMO_CSV_PATH})"
         except Exception:
             pass
     if CSV_PATH.exists():
@@ -169,16 +177,23 @@ def render_overview() -> None:
     # -------------------------------------------------------------------------
     df, source_label = load_exploratory_data()
 
-    st.markdown(
-        """
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h3 style="font-size:18px; font-weight:700; color:#0f172a; margin:0;">
-                📊 Processed Big Data Analytics Dataset
-            </h3>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    t_col1, t_col2 = st.columns([3, 1])
+    with t_col1:
+        st.markdown(
+            f"""
+            <div style="margin-bottom:6px;">
+                <h3 style="font-size:18px; font-weight:700; color:#0f172a; margin:0;">
+                    📊 Processed Big Data Analytics Dataset
+                </h3>
+                <span style="font-size:12px; color:#64748b;">Source: {source_label}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with t_col2:
+        if st.button("🔍 Open Dataset Explorer", use_container_width=True):
+            st.session_state["nav_page"] = "Dataset Explorer"
+            st.rerun()
 
     if df is not None and not df.empty:
         total_rows = len(df)

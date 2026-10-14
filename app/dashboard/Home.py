@@ -31,6 +31,7 @@ apply_custom_styles()
 
 # Import page views
 from app.dashboard.views.overview import render_overview
+from app.dashboard.views.dataset_explorer import render_dataset_explorer
 from app.dashboard.views.single_prediction import render_single_prediction
 from app.dashboard.views.batch_prediction import render_batch_prediction
 from app.dashboard.views.model_info import render_model_info
@@ -40,6 +41,7 @@ from app.dashboard.views.about import render_about
 # Define navigation pages
 NAV_PAGES = [
     "Dashboard",
+    "Dataset Explorer",
     "Single Prediction",
     "Batch Prediction",
     "Model Information",
@@ -79,6 +81,7 @@ with st.sidebar:
     # Map icon representations
     icon_map = {
         "Dashboard": "📊  Dashboard",
+        "Dataset Explorer": "🔍  Dataset Explorer",
         "Single Prediction": "👤  Single Prediction",
         "Batch Prediction": "📄  Batch Prediction",
         "Model Information": "ℹ️  Model Information",
@@ -128,6 +131,8 @@ active_page = st.session_state["nav_page"]
 
 if active_page == "Dashboard":
     render_overview()
+elif active_page == "Dataset Explorer":
+    render_dataset_explorer()
 elif active_page == "Single Prediction":
     render_single_prediction()
 elif active_page == "Batch Prediction":

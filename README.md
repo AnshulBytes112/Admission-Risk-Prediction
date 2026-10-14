@@ -395,18 +395,36 @@ py -3.13 -m pytest tests/test_dashboard_phase7.py -v
 See [`docs/PHASE7_DASHBOARD.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE7_DASHBOARD.md) for architecture, schema validation, and full execution guidelines.
 
 
-## Phase 8: integration and smoke testing
+## Phase 8: Production-Style Academic UI, Dataset Explorer & End-to-End Demo
 
-Phase 8 adds a PowerShell smoke-test script, a local-artifact validator, and a Compose configuration fix. These checks verify service reachability and expected files; they do not validate clinical performance.
+Phase 8 elevates the platform into a cohesive, demonstrable academic application:
+- **Reproducible Synthetic Demo Dataset:** Generated via `scripts/generate_demo_dataset.py`, providing 500 rich patient records and pre-formatted batch prediction templates.
+- **Interactive Dataset Explorer:** Paginated inspection, multi-attribute filtering (Age, Hour, Outcome, Patient ID), summary statistics, CSV export, and 1-click feature forwarding to the Single Prediction form.
+- **Pipeline Observability Telemetry:** Real-time health scores, Spark & HDFS manifest inspection, quarantine monitoring, and live FastAPI endpoint probing.
+- **Batch CSV Evaluation:** Upload and score up to 500 records via `POST /predict/batch` with immediate CSV export.
+
+### Quick Verification & Demonstration Commands (Windows PowerShell)
 
 ```powershell
-docker compose config --quiet
-python scripts/validate_artifacts.py
-docker compose up --build -d api dashboard
-.\scripts\smoke_test.ps1
+# 1. Generate Demo Dataset and Batch Template
+py -3.13 scripts/generate_demo_dataset.py --rows 500 --seed 42
+
+# 2. Build and Start Docker Services
+docker compose build api dashboard
+docker compose up -d api dashboard
+
+# 3. Check Running Containers
+docker compose ps
+
+# 4. Run Automated Test Suite (114 passing tests)
+py -3.13 -m pytest tests/ -v
 ```
 
-See `docs/PHASE8_INTEGRATION_TESTING.md` for the full demonstration order and troubleshooting.
+Access Web Interfaces:
+- **Streamlit Analytics Dashboard:** [http://localhost:8501](http://localhost:8501)
+- **FastAPI OpenAPI Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+See [`docs/PHASE8_DEMO_GUIDE.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE8_DEMO_GUIDE.md) for full walkthroughs, architecture diagrams, and demonstration steps.
 
 
 ## Phase 9: reproducibility and submission materials

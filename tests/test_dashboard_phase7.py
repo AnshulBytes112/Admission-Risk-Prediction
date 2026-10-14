@@ -258,7 +258,8 @@ def test_load_local_model_artifacts():
 def test_load_exploratory_data_graceful():
     """Verify exploratory data loader returns clean tuple when path is missing."""
     with mock.patch("app.dashboard.views.overview.PARQUET_PATH", Path("nonexistent/features.parquet")):
-        with mock.patch("app.dashboard.views.overview.CSV_PATH", Path("nonexistent/raw.csv")):
-            df, source = load_exploratory_data()
-            assert df is None
-            assert "No dataset found" in source
+        with mock.patch("app.dashboard.views.overview.DEMO_CSV_PATH", Path("nonexistent/demo.csv")):
+            with mock.patch("app.dashboard.views.overview.CSV_PATH", Path("nonexistent/raw.csv")):
+                df, source = load_exploratory_data()
+                assert df is None
+                assert "No dataset found" in source
