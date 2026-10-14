@@ -371,15 +371,28 @@ Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to
 See [`docs/PHASE6_API.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE6_API.md) for full request/response schemas, security considerations, and error code specifications.
 
 
-## Phase 7: Streamlit dashboard integration
+## Phase 7: Modern Streamlit Analytics Dashboard & FastAPI Integration
 
-Ensure Phase 5 has generated `models/risk_model.joblib`, then rebuild and start the API and dashboard:
+Phase 7 provides a modern, responsive healthcare analytics SaaS interface matching the project's visual design reference with a dark navy sidebar, live status cards, experimental model governance badges, single-patient 12-feature prediction form with presets, batch CSV evaluation (up to 500 records), and automated endpoint diagnostics.
+
+Ensure Phase 5 artifacts exist (`models/risk_model.joblib`), then build and run via Docker Compose:
 
 ```powershell
-docker compose up --build -d api dashboard
+docker compose build api dashboard
+docker compose up -d api dashboard
+docker compose ps
 ```
 
-Open the dashboard at http://localhost:8501. It includes summary metrics, patient search, age filters, observations, charts, and a single-record form that calls the trained model through `POST /predict`. The dashboard labels any legacy heuristic score as illustrative rather than a model prediction. See `docs/PHASE7_DASHBOARD.md`.
+Access the web services:
+- **Streamlit Analytics Dashboard:** [http://localhost:8501](http://localhost:8501)
+- **FastAPI OpenAPI Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+Run automated dashboard tests:
+```powershell
+py -3.13 -m pytest tests/test_dashboard_phase7.py -v
+```
+
+See [`docs/PHASE7_DASHBOARD.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE7_DASHBOARD.md) for architecture, schema validation, and full execution guidelines.
 
 
 ## Phase 8: integration and smoke testing

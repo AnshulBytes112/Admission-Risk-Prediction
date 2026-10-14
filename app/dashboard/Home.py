@@ -1,266 +1,132 @@
-"""Streamlit Starter Dashboard for Emergency Admission Risk Prediction (Phase 1).
+"""Modern Streamlit Analytics Dashboard — Phase 7 Main Entry Point.
 
-Academic Big Data Analytics software demonstration.
-Provides:
-- Project overview & architecture summary
-- Clear synthetic-data disclaimer
-- Live backend API status check with graceful offline fallback
-- Local dataset inspection with informative empty state
-- Physiological vitals distribution visualizations
-- Phase 1 foundation scope notes and next steps
+Emergency Admission Risk Prediction — Big Data Analytics Platform.
+Integrates modern responsive UI matching reference layout with Phase 6 FastAPI inference backend.
 """
-import os
-from pathlib import Path
-import pandas as pd
-import plotly.express as px
-import requests
+from __future__ import annotations
+
 import streamlit as st
 
-# Configure page layout and metadata
+# Configure page layout and visual identity
 st.set_page_config(
     page_title="Emergency Admission Risk Prediction | BDA Platform",
-    page_icon="🏥",
+    page_icon="❤️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# -----------------------------------------------------------------------------
-# Configuration from environment variables
-# -----------------------------------------------------------------------------
-API_BASE = os.getenv("DASHBOARD_API_URL", os.getenv("API_BASE_URL", "http://localhost:8000"))
-DATA_DIR = os.getenv("DATA_DIR", "data")
-THRESHOLD_DEFAULT = float(os.getenv("RISK_THRESHOLD", "0.7"))
-RAW_DATA_PATH = Path(DATA_DIR) / "raw" / "patient_observations.csv"
+# Apply unified design system tokens, fonts, and dark sidebar styling
+from app.dashboard.styles import apply_custom_styles
+apply_custom_styles()
+
+# Import page views
+from app.dashboard.views.overview import render_overview
+from app.dashboard.views.single_prediction import render_single_prediction
+from app.dashboard.views.batch_prediction import render_batch_prediction
+from app.dashboard.views.model_info import render_model_info
+from app.dashboard.views.system_status import render_system_status
+from app.dashboard.views.about import render_about
+
+# Define navigation pages
+NAV_PAGES = [
+    "Dashboard",
+    "Single Prediction",
+    "Batch Prediction",
+    "Model Information",
+    "System Status",
+    "About",
+]
+
+# Initialize navigation session state
+if "nav_page" not in st.session_state:
+    st.session_state["nav_page"] = "Dashboard"
 
 # -----------------------------------------------------------------------------
-# Header and Academic Disclaimer
-# -----------------------------------------------------------------------------
-st.title("🏥 Emergency Admission Risk Prediction")
-st.markdown("### Big Data Analytics Academic Platform · Phase 1: Foundation & Infrastructure")
-
-st.warning(
-    "⚠️ **ACADEMIC SOFTWARE DEMONSTRATION DISCLAIMER**\n\n"
-    "All patient profiles, vital signs, lab observations, and admission target flags in this project are "
-    "**100% synthetically generated** for software and big-data architecture demonstration purposes. "
-    "This system is **NOT** a clinical decision-support tool, is not derived from real hospital patients, and "
-    "must **NEVER** be used for medical diagnosis, triage, treatment, or clinical decisions."
-)
-
-# -----------------------------------------------------------------------------
-# Sidebar: System Settings & Health Check
+# Persistent Sidebar
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ System Status & Controls")
-    st.caption("Phase 1: Project Foundation")
-    
-    st.markdown("---")
-    st.markdown("**Backend API Connectivity**")
-    
-    # Graceful API status check
-    api_online = False
-    api_info = {}
-    try:
-        r = requests.get(f"{API_BASE}/health", timeout=3)
-        if r.ok:
-            api_online = True
-            api_info = r.json()
-    except Exception:
-        api_online = False
-
-    if api_online:
-        st.success(f"API Online ({API_BASE})")
-        st.write(f"• Application Health: `{api_info.get('application_health', 'healthy')}`")
-        st.write(f"• Model Status: `{api_info.get('model_readiness', 'not_loaded')}`")
-    else:
-        st.error(f"API Offline ({API_BASE})")
-        st.caption("Start the API container using Docker Compose or `uvicorn app.api.main:app`.")
-
-    st.markdown("---")
-    st.markdown("**Configuration**")
-    st.write(f"• Risk Threshold: `{THRESHOLD_DEFAULT}`")
-    st.write(f"• Raw Data Path: `{RAW_DATA_PATH}`")
-    
-    if st.button("🔄 Refresh View"):
-        st.rerun()
-
-# -----------------------------------------------------------------------------
-# Section 1: Architecture Summary
-# -----------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("📐 Big Data Analytics Architecture")
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
+    # Brand Header matching UI Reference design
     st.markdown(
         """
-        <div style="padding:12px; border-radius:8px; border:1px solid #3b82f6; background-color:#eff6ff; color:#1e3a8a;">
-            <h4 style="margin:0; color:#1e40af;">Phase 1: Foundation</h4>
-            <p style="margin:4px 0 0 0; font-size:13px; color:#1e3a8a;"><strong>Status: Active</strong><br/>
-            Synthetic data generator, Docker infrastructure, starter API & dashboard.</p>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 4px 20px 4px;">
+            <div style="background: #e11d48; width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; box-shadow: 0 4px 6px -1px rgba(225, 29, 72, 0.4);">
+                ❤️
+            </div>
+            <div>
+                <div style="font-size: 15px; font-weight: 700; color: #ffffff; line-height: 1.2;">
+                    Emergency<br>Admission Risk
+                </div>
+                <div style="font-size: 11px; color: #94a3b8; font-weight: 500; margin-top: 2px;">
+                    BDA Project
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-with col2:
-    st.markdown(
-        """
-        <div style="padding:12px; border-radius:8px; border:1px solid #94a3b8; background-color:#f8fafc; color:#334155;">
-            <h4 style="margin:0; color:#475569;">Phases 2–4: Ingestion & Storage</h4>
-            <p style="margin:4px 0 0 0; font-size:13px; color:#334155;"><strong>Status: Deferred</strong><br/>
-            Kafka streaming producer/consumer, HDFS ingestion, and PySpark batch cleaning.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+
+    # Navigation Radio Selector
+    # Map icon representations
+    icon_map = {
+        "Dashboard": "📊  Dashboard",
+        "Single Prediction": "👤  Single Prediction",
+        "Batch Prediction": "📄  Batch Prediction",
+        "Model Information": "ℹ️  Model Information",
+        "System Status": "⚙️  System Status",
+        "About": "📖  About",
+    }
+
+    display_options = [icon_map[p] for p in NAV_PAGES]
+    current_index = NAV_PAGES.index(st.session_state["nav_page"])
+
+    selected_display = st.radio(
+        "Navigation",
+        options=display_options,
+        index=current_index,
+        label_visibility="collapsed",
     )
-with col3:
+
+    # Update active page from selection
+    for page_name, disp in icon_map.items():
+        if disp == selected_display:
+            st.session_state["nav_page"] = page_name
+            break
+
+    # Spacing before bottom persistent disclaimer card
+    st.markdown("<div style='margin-top: 36px;'></div>", unsafe_allow_html=True)
+
+    # Bottom Academic Demonstration Card (matches reference image sidebar card)
     st.markdown(
         """
-        <div style="padding:12px; border-radius:8px; border:1px solid #94a3b8; background-color:#f8fafc; color:#334155;">
-            <h4 style="margin:0; color:#475569;">Phase 5: Machine Learning</h4>
-            <p style="margin:4px 0 0 0; font-size:13px; color:#334155;"><strong>Status: Deferred</strong><br/>
-            Patient-grouped split, baseline model comparison, PR-AUC evaluation.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with col4:
-    st.markdown(
-        """
-        <div style="padding:12px; border-radius:8px; border:1px solid #94a3b8; background-color:#f8fafc; color:#334155;">
-            <h4 style="margin:0; color:#475569;">Phases 6–10: Inference & Ops</h4>
-            <p style="margin:4px 0 0 0; font-size:13px; color:#334155;"><strong>Status: Deferred</strong><br/>
-            REST model inference, real-time dashboard alerts, integration testing.</p>
+        <div style="background: rgba(30, 41, 59, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 14px; margin-top: auto;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 16px;">ℹ️</span>
+                <span style="font-size: 12px; font-weight: 700; color: #f8fafc;">Academic Demonstration Only</span>
+            </div>
+            <div style="font-size: 11px; color: #94a3b8; line-height: 1.45;">
+                All patient records and clinical data are <strong>SYNTHETIC</strong>. This application is an academic demonstration and must <strong>never</strong> be used for actual medical decisions, patient diagnosis, or emergency department triage.
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 # -----------------------------------------------------------------------------
-# Section 2: Local Dataset Inspection
+# Main View Router
 # -----------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("📊 Synthetic Clinical Dataset Explorer")
+active_page = st.session_state["nav_page"]
 
-if not RAW_DATA_PATH.exists():
-    # Empty State Display
-    st.info(
-        f"ℹ️ **No dataset found at `{RAW_DATA_PATH}`.**\n\n"
-        "Generate synthetic patient observations to explore records and summary statistics."
-    )
-    st.markdown("#### How to Generate the Dataset:")
-    st.markdown("**Option A: Using Python directly (PowerShell):**")
-    st.code("py -3.13 scripts/generate_synthetic_data.py --rows 10000 --seed 42 --output data/raw/patient_observations.csv")
-    st.markdown("**Option B: Using Docker Compose utility service:**")
-    st.code("docker compose --profile tools run --build --rm data-generator")
+if active_page == "Dashboard":
+    render_overview()
+elif active_page == "Single Prediction":
+    render_single_prediction()
+elif active_page == "Batch Prediction":
+    render_batch_prediction()
+elif active_page == "Model Information":
+    render_model_info()
+elif active_page == "System Status":
+    render_system_status()
+elif active_page == "About":
+    render_about()
 else:
-    # Load and cache dataset
-    @st.cache_data
-    def load_data(filepath: str) -> pd.DataFrame:
-        return pd.read_csv(filepath)
-
-    try:
-        df = load_data(str(RAW_DATA_PATH))
-        
-        # Summary KPI Metrics
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Total Observations", f"{len(df):,}")
-        m2.metric("Unique Patients", f"{df['patient_id'].nunique():,}" if "patient_id" in df else "N/A")
-        
-        prevalence = df["admission_within_24h"].mean() * 100 if "admission_within_24h" in df else 0
-        m3.metric("Simulated Admission Rate", f"{prevalence:.2f}%")
-        
-        synthetic_flag = df["synthetic_data"].all() if "synthetic_data" in df else False
-        m4.metric("Synthetic Marker", "True (100%)" if synthetic_flag else "Mixed")
-        
-        missing_count = int(df.isna().sum().sum())
-        m5.metric("Controlled Missing Values", f"{missing_count:,}")
-
-        # Data Exploration and Filtering
-        st.markdown("##### Filter Observations")
-        fcol1, fcol2, fcol3 = st.columns([2, 1, 1])
-        with fcol1:
-            search_query = st.text_input("Search Patient ID", placeholder="e.g. SYN000123")
-        with fcol2:
-            min_age = st.number_input("Min Age", min_value=18, max_value=100, value=18)
-        with fcol3:
-            max_age = st.number_input("Max Age", min_value=18, max_value=100, value=100)
-
-        filtered_df = df.copy()
-        if search_query:
-            filtered_df = filtered_df[filtered_df["patient_id"].str.contains(search_query, case=False, na=False)]
-        filtered_df = filtered_df[(filtered_df["age"] >= min_age) & (filtered_df["age"] <= max_age)]
-
-        st.dataframe(filtered_df.head(100), use_container_width=True, hide_index=True)
-        st.caption(f"Showing {min(100, len(filtered_df))} of {len(filtered_df):,} matching rows.")
-
-        # Vitals Distribution Visualizations
-        st.markdown("##### Physiological Vitals Distributions")
-        chart1, chart2 = st.columns(2)
-        with chart1:
-            if "heart_rate" in filtered_df:
-                fig_hr = px.histogram(
-                    filtered_df.dropna(subset=["heart_rate"]),
-                    x="heart_rate",
-                    nbins=35,
-                    title="Heart Rate Distribution (bpm)",
-                    color_discrete_sequence=["#2563eb"],
-                )
-                fig_hr.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_hr, use_container_width=True)
-
-        with chart2:
-            if "systolic_bp" in filtered_df:
-                fig_sbp = px.histogram(
-                    filtered_df.dropna(subset=["systolic_bp"]),
-                    x="systolic_bp",
-                    nbins=35,
-                    title="Systolic Blood Pressure Distribution (mmHg)",
-                    color_discrete_sequence=["#059669"],
-                )
-                fig_sbp.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_sbp, use_container_width=True)
-
-        chart3, chart4 = st.columns(2)
-        with chart3:
-            if "spo2" in filtered_df:
-                fig_spo2 = px.histogram(
-                    filtered_df.dropna(subset=["spo2"]),
-                    x="spo2",
-                    nbins=25,
-                    title="Oxygen Saturation SpO₂ (%)",
-                    color_discrete_sequence=["#d97706"],
-                )
-                fig_spo2.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_spo2, use_container_width=True)
-
-        with chart4:
-            if "admission_within_24h" in filtered_df:
-                target_counts = filtered_df["admission_within_24h"].value_counts().reset_index()
-                target_counts.columns = ["Target (0=No, 1=Yes)", "Count"]
-                fig_target = px.bar(
-                    target_counts,
-                    x="Target (0=No, 1=Yes)",
-                    y="Count",
-                    title="Synthetic Admission Within 24h Distribution",
-                    color="Target (0=No, 1=Yes)",
-                    color_discrete_map={0: "#64748b", 1: "#dc2626"},
-                )
-                fig_target.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_target, use_container_width=True)
-
-    except Exception as exc:
-        st.error(f"Error loading dataset: {exc}")
-
-# -----------------------------------------------------------------------------
-# Section 3: Phase 1 Scope Notice
-# -----------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("ℹ️ Phase 1 Scope & Next Steps")
-st.markdown(
-    """
-    - **Model Training Notice**: In accordance with the project roadmap, machine learning model training 
-      is scheduled for **Phase 5**. No predictive models are fabricated or loaded in Phase 1.
-    - **Streaming Notice**: Kafka streaming pipelines and consumers will be integrated in **Phase 2**.
-    - **HDFS & Spark Notice**: Distributed storage upload and batch feature engineering will be configured in **Phases 3 & 4**.
-    """
-)
+    render_overview()

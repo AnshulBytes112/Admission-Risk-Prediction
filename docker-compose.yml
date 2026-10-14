@@ -122,6 +122,7 @@ services:
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
     volumes:
       - ./data:/app/data
+      - ./models:/app/models:ro
     restart: unless-stopped
 
   data-generator:
