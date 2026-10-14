@@ -61,11 +61,21 @@ docker compose up -d
 ### 5. Access Application and Service Web UIs
 | Service | URL / Endpoint | Purpose |
 |---|---|---|
-| **Streamlit Dashboard** | [http://localhost:8501](http://localhost:8501) | Interactive clinical dataset explorer & architecture cards |
-| **FastAPI Docs (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | REST API endpoints (`/`, `/health`, `/metadata`) |
+| **React Frontend (Vite)** | [http://localhost:3000](http://localhost:3000) | Modern Clinical Risk SaaS UI (Single & Batch Prediction, System Health) |
+| **Streamlit Dashboard** | [http://localhost:8501](http://localhost:8501) | Streamlit dashboard & dataset explorer |
+| **FastAPI Docs (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | REST API endpoints (`/`, `/health`, `/metadata`, `/predict`) |
 | **Hadoop NameNode UI** | [http://localhost:9870](http://localhost:9870) | HDFS distributed filesystem explorer |
 | **Spark Master UI** | [http://localhost:8080](http://localhost:8080) | PySpark cluster execution monitor |
 | **Kafka Broker** | `localhost:9092` | Event streaming broker listener |
+
+### 5.1 Running the Modern React Frontend
+To launch the modern React web application (styled with custom CSS matching the production SaaS layout):
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+Open **[http://localhost:3000](http://localhost:3000)** in your browser. The Vite server automatically proxies requests to the FastAPI backend running on port 8000.
 
 ### 6. Clean Up and Shutdown
 Stop running containers:

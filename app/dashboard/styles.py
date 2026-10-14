@@ -1,11 +1,12 @@
-"""Design system, color tokens, and custom CSS for the Streamlit dashboard.
+"""Design system, color tokens, and polished SaaS CSS for Phase 8 Streamlit dashboard.
 
-Matches the healthcare analytics SaaS aesthetic from the UI reference image:
-- Dark navy/indigo sidebar (#0f172a / #1e293b)
+Implements the modern healthcare analytics SaaS design from the UI reference:
+- Dark navy/indigo sidebar (#0f172a) with pill navigation
 - Light neutral workspace (#f8fafc)
-- Clean, rounded cards (#ffffff with subtle border and shadow)
-- Primary blue actions (#2563eb)
-- Green/teal availability accents, amber/red warning badges
+- Clean, bordered white cards (#ffffff, border #e2e8f0, radius 12px)
+- Professional typography (Inter, sans-serif)
+- Primary action blue (#2563eb)
+- Availability teal (#0d9488), experimental amber (#d97706), and alert red (#dc2626)
 """
 from __future__ import annotations
 
@@ -16,47 +17,68 @@ def apply_custom_styles() -> None:
     """Inject custom CSS tokens and component styles into the Streamlit app."""
     css = """
     <style>
-    /* Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    /* Global Typography & Reset */
+    html, body, [class*="css"], [class*="st-"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
     }
 
-    /* Main background */
+    /* Streamlit Main Workspace Container */
     .stApp {
-        background-color: #f8fafc;
-        color: #0f172a;
+        background-color: #f8fafc !important;
+        color: #0f172a !important;
     }
 
-    /* Sidebar container styling */
+    /* Reduce default large Streamlit top padding */
+    .block-container {
+        padding-top: 1.5rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 1400px !important;
+    }
+
+    /* -------------------------------------------------------------------------
+       Sidebar Styling (Dark Navy #0f172a)
+       ------------------------------------------------------------------------- */
     [data-testid="stSidebar"] {
         background-color: #0f172a !important;
-        color: #f8fafc !important;
+        border-right: 1px solid #1e293b !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
     }
 
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span,
     [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3 {
+    [data-testid="stSidebar"] div {
         color: #f8fafc !important;
     }
 
-    /* Sidebar navigation radio buttons styled as SaaS nav pills */
+    /* Radio buttons transformed into sleek SaaS navigation pills */
+    [data-testid="stSidebar"] div[role="radiogroup"] {
+        gap: 4px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
     [data-testid="stSidebar"] div[role="radiogroup"] > label {
-        padding: 8px 12px;
-        margin-bottom: 4px;
-        border-radius: 8px;
-        transition: all 0.15s ease-in-out;
+        padding: 10px 14px !important;
+        margin: 0 !important;
+        border-radius: 8px !important;
+        transition: all 0.15s ease-in-out !important;
         color: #94a3b8 !important;
-        font-weight: 500;
-        cursor: pointer;
+        font-weight: 500 !important;
+        font-size: 13.5px !important;
+        cursor: pointer !important;
+        background-color: transparent !important;
+        display: flex !important;
+        align-items: center !important;
     }
 
     [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-        background-color: #1e293b;
+        background-color: #1e293b !important;
         color: #ffffff !important;
     }
 
@@ -64,147 +86,140 @@ def apply_custom_styles() -> None:
     [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
         background-color: #2563eb !important;
         color: #ffffff !important;
-        font-weight: 600;
+        font-weight: 600 !important;
+        box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25) !important;
     }
 
-    /* Hide standard radio circle in sidebar */
-    [data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"] {
-        display: none;
+    /* Hide the radio dot */
+    [data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"],
+    [data-testid="stSidebar"] div[role="radiogroup"] [data-testid="stWidgetLabel"] {
+        display: none !important;
     }
 
-    /* White rounded card */
-    .bda-card {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 16px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    /* -------------------------------------------------------------------------
+       Card Styling (st.container(border=True) Native Hook)
+       ------------------------------------------------------------------------- */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+        padding: 1.25rem !important;
+        margin-bottom: 0.75rem !important;
     }
 
-    /* Status metric card */
+    /* Status card styling */
     .bda-status-card {
-        background-color: #ffffff;
+        background: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        padding: 16px;
+        padding: 14px 16px;
         display: flex;
         align-items: center;
         gap: 14px;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         height: 100%;
     }
 
     .bda-icon-circle {
-        width: 44px;
-        height: 44px;
+        width: 42px;
+        height: 42px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 20px;
+        font-size: 19px;
         flex-shrink: 0;
     }
 
-    .icon-green { background-color: #dcfce7; color: #16a34a; }
-    .icon-teal { background-color: #ccfbf1; color: #0d9488; }
-    .icon-purple { background-color: #f3e8ff; color: #9333ea; }
-    .icon-yellow { background-color: #fef9c3; color: #ca8a04; }
-    .icon-red { background-color: #fee2e2; color: #dc2626; }
+    .icon-green { background: #dcfce7; color: #16a34a; }
+    .icon-teal { background: #ccfbf1; color: #0d9488; }
+    .icon-purple { background: #f3e8ff; color: #9333ea; }
+    .icon-yellow { background: #fef9c3; color: #ca8a04; }
+    .icon-red { background: #fee2e2; color: #dc2626; }
 
-    /* Experimental Badge */
+    /* -------------------------------------------------------------------------
+       Badges & Banners
+       ------------------------------------------------------------------------- */
     .bda-badge-experimental {
         display: inline-flex;
         align-items: center;
         gap: 6px;
         background-color: #fee2e2;
-        color: #991b1b;
+        color: #b91c1c;
         border: 1px solid #fecaca;
         border-radius: 6px;
-        padding: 6px 12px;
+        padding: 5px 12px;
         font-size: 12px;
         font-weight: 700;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
     }
 
-    /* Persistent Synthetic Banner */
-    .bda-banner-warning {
+    .bda-alert-banner {
         background-color: #fffbeb;
         border-left: 4px solid #f59e0b;
         color: #92400e;
         padding: 12px 16px;
-        border-radius: 6px;
+        border-radius: 8px;
         font-size: 13px;
-        margin-bottom: 16px;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
         line-height: 1.5;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
     }
 
-    /* Risk Score Results Badge */
-    .bda-risk-badge-low {
-        background-color: #dcfce7;
-        color: #15803d;
-        border: 1px solid #bbf7d0;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 14px;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
+    /* -------------------------------------------------------------------------
+       Form Inputs & Buttons
+       ------------------------------------------------------------------------- */
+    .stNumberInput input, .stTextInput input, .stSelectbox [data-baseweb="select"] {
+        border-radius: 8px !important;
+        border: 1px solid #cbd5e1 !important;
+        font-size: 13.5px !important;
     }
 
-    .bda-risk-badge-high {
-        background-color: #fee2e2;
-        color: #b91c1c;
-        border: 1px solid #fecaca;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 14px;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
+    .stNumberInput input:focus, .stTextInput input:focus {
+        border-color: #2563eb !important;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
     }
 
-    /* Sidebar Footer Disclaimer Card */
-    .sidebar-disclaimer-card {
-        background-color: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 8px;
-        padding: 12px;
-        font-size: 12px;
-        color: #cbd5e1 !important;
-        line-height: 1.4;
-        margin-top: 20px;
-    }
-
-    /* Buttons styling */
+    /* Buttons */
     .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.15s ease-in-out;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        font-size: 13.5px !important;
+        padding: 8px 16px !important;
+        transition: all 0.15s ease-in-out !important;
     }
 
     .stButton > button[kind="primary"] {
-        background-color: #2563eb;
-        border-color: #2563eb;
-        color: #ffffff;
+        background-color: #2563eb !important;
+        border-color: #2563eb !important;
+        color: #ffffff !important;
+        box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2) !important;
     }
 
     .stButton > button[kind="primary"]:hover {
-        background-color: #1d4ed8;
-        border-color: #1d4ed8;
+        background-color: #1d4ed8 !important;
+        border-color: #1d4ed8 !important;
     }
 
-    /* Streamlit forms cleaner styling */
-    div[data-testid="stForm"] {
-        border: none;
-        padding: 0;
+    .stButton > button[kind="secondary"] {
+        background-color: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+        color: #334155 !important;
     }
 
-    /* Compact inputs */
-    .stNumberInput input {
-        border-radius: 6px;
+    .stButton > button[kind="secondary"]:hover {
+        background-color: #f1f5f9 !important;
+        border-color: #94a3b8 !important;
+    }
+
+    /* DataFrames */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
     }
     </style>
     """

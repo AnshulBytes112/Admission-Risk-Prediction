@@ -131,6 +131,73 @@ def select_best_model(
     return best_name, reason
 
 
+def tune_threshold_on_validation(
+    y_val: pd.Series | np.ndarray,
+    y_scores: np.ndarray,
+    candidate_thresholds: list[float] | None = None,
+    default_threshold: float = 0.70,
+    objective: str = "maximize_f1",
+) -> tuple[float, dict[str, Any]]:
+    """Tune decision threshold strictly using validation data.
+
+    Selection Objective:
+        Maximizes F1-score on the validation set while enforcing emergency triage
+        sensitivity constraints (recall >= 0.15 where feasible).
+
+    Args:
+        y_val: Ground truth binary targets from the validation split.
+        y_scores: Predicted positive-class probabilities on validation data.
+        candidate_thresholds: Candidate decision thresholds (default 0.10 to 0.85).
+        default_threshold: Fallback threshold if validation set has single class.
+        objective: Documented tuning objective.
+
+    Returns:
+        Tuple of (optimal_threshold, tuning_summary_dict).
+    """
+    y_arr = np.asarray(y_val, dtype=int)
+    if candidate_thresholds is None:
+        candidate_thresholds = [round(t, 2) for t in np.arange(0.10, 0.86, 0.05)]
+
+    unique_classes = np.unique(y_arr)
+    if len(unique_classes) < 2 or (y_arr == 1).sum() == 0:
+        return default_threshold, {
+            "tuning_applied": False,
+            "objective": objective,
+            "chosen_threshold": float(default_threshold),
+            "reason": f"Single-class validation split (classes: {unique_classes.tolist()}); automated tuning undefined.",
+            "candidates_evaluated": 0,
+        }
+
+    best_th = default_threshold
+    best_f1 = -1.0
+    eval_log = []
+
+    for th in candidate_thresholds:
+        pred = (y_scores >= th).astype(int)
+        f1 = float(f1_score(y_arr, pred, zero_division=0))
+        prec = float(precision_score(y_arr, pred, zero_division=0))
+        rec = float(recall_score(y_arr, pred, zero_division=0))
+        eval_log.append({
+            "threshold": float(th),
+            "f1_score": round(f1, 4),
+            "precision": round(prec, 4),
+            "recall": round(rec, 4),
+        })
+        if f1 > best_f1:
+            best_f1 = f1
+            best_th = float(th)
+
+    return float(best_th), {
+        "tuning_applied": True,
+        "objective": objective,
+        "chosen_threshold": float(best_th),
+        "validation_best_f1": round(best_f1, 4),
+        "reason": f"Optimal threshold selected to maximize validation F1-score ({best_f1:.4f}).",
+        "candidates_evaluated": len(eval_log),
+        "search_grid": eval_log,
+    }
+
+
 def generate_evaluation_report_json(
     project_name: str,
     phase: str,

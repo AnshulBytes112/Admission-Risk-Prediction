@@ -23,6 +23,7 @@ from ml.evaluation import (
     generate_evaluation_report_md,
     generate_model_metadata,
     select_best_model,
+    tune_threshold_on_validation,
 )
 from ml.features import (
     TARGET_COLUMN,
@@ -84,6 +85,11 @@ def parse_arguments() -> argparse.Namespace:
         help="Decision threshold for positive risk classification.",
     )
     parser.add_argument(
+        "--tune-threshold",
+        action="store_true",
+        help="Tune decision threshold on validation set to maximize F1.",
+    )
+    parser.add_argument(
         "--minimum-positive-examples",
         type=int,
         default=5,
@@ -93,6 +99,12 @@ def parse_arguments() -> argparse.Namespace:
         "--allow-small-dataset",
         action="store_true",
         help="Permit experimental smoke-testing when dataset is below statistical adequacy limits.",
+    )
+    parser.add_argument(
+        "--experimental",
+        action="store_true",
+        default=True,
+        help="Mark saved model artifact as experimental academic demonstration.",
     )
     return parser.parse_args()
 
@@ -165,14 +177,15 @@ def main() -> int:
         return 2
 
     is_experimental = bool(
-        args.allow_small_dataset
-        and diagnostics.target_class_counts.get(1, 0) < args.minimum_positive_examples
+        args.experimental
+        or args.allow_small_dataset
+        or diagnostics.target_class_counts.get(1, 0) < args.minimum_positive_examples
     )
     if is_experimental:
         print("\n================================================================================")
-        print("ATTENTION: EXPERIMENTAL SMOKE TEST MODE ACTIVATED (--allow-small-dataset)")
-        print("Dataset does not meet minimum statistical criteria for clinical generalization.")
-        print("Artifacts will be labeled as EXPERIMENTAL and MUST NOT be treated as reliable.")
+        print("ATTENTION: EXPERIMENTAL SMOKE TEST / ACADEMIC DEMO MODE")
+        print("Dataset is synthetic and model is for software verification only.")
+        print("Artifacts will be labeled as EXPERIMENTAL and MUST NOT be treated as clinical.")
         print("================================================================================")
 
     # Step 3: Feature selection and leak prevention
@@ -232,18 +245,34 @@ def main() -> int:
     best_name, selection_reason = select_best_model(validation_results)
     best_pipeline = fitted_models[best_name]
 
+    # Threshold tuning on validation set only
+    val_scores_best = best_pipeline.predict_proba(X_val)[:, 1]
+    if getattr(args, "tune_threshold", False):
+        active_threshold, tuning_summary = tune_threshold_on_validation(
+            y_val, val_scores_best, default_threshold=args.threshold
+        )
+        print("\n--- VALIDATION THRESHOLD TUNING ---")
+        print(f"Objective        : {tuning_summary.get('objective')}")
+        print(f"Tuned threshold  : {active_threshold} (Default: {args.threshold})")
+        print(f"Validation F1    : {tuning_summary.get('validation_best_f1', 'N/A')}")
+        print(f"Reason           : {tuning_summary.get('reason')}")
+    else:
+        active_threshold = args.threshold
+        tuning_summary = {"tuning_applied": False, "chosen_threshold": active_threshold, "reason": "Fixed default threshold used."}
+
     print("\n--- MODEL SELECTION ---")
     print(f"Selected model   : {best_name}")
     print(f"Selection reason : {selection_reason}")
+    print(f"Decision threshold: {active_threshold}")
 
     # Step 7: Freeze model and evaluate once on held-out test set
     test_scores = best_pipeline.predict_proba(X_test)[:, 1]
-    test_metrics = compute_metrics(y_test, test_scores, threshold=args.threshold)
+    test_metrics = compute_metrics(y_test, test_scores, threshold=active_threshold)
 
     print("\n--- HELD-OUT TEST EVALUATION ---")
     print(f"Accuracy         : {test_metrics.get('accuracy')}")
-    print(f"Precision (th={args.threshold}): {test_metrics.get('precision')}")
-    print(f"Recall (th={args.threshold})   : {test_metrics.get('recall')}")
+    print(f"Precision (th={active_threshold}): {test_metrics.get('precision')}")
+    print(f"Recall (th={active_threshold})   : {test_metrics.get('recall')}")
     print(f"F1-Score         : {test_metrics.get('f1_score')}")
     print(f"ROC-AUC          : {test_metrics.get('roc_auc')} ({test_metrics.get('roc_auc_note', 'evaluated')})")
     print(f"PR-AUC           : {test_metrics.get('pr_auc_average_precision')} ({test_metrics.get('pr_auc_note', 'evaluated')})")
@@ -265,7 +294,7 @@ def main() -> int:
         "model": best_pipeline,
         "model_name": best_name,
         "features": features,
-        "threshold": args.threshold,
+        "threshold": active_threshold,
         "target": TARGET_COLUMN,
         "dataset_type": "synthetic",
         "is_experimental": is_experimental,
@@ -287,7 +316,7 @@ def main() -> int:
         validation_metrics=validation_results,
         selected_model=best_name,
         selection_reason=selection_reason,
-        threshold=args.threshold,
+        threshold=active_threshold,
         test_metrics=test_metrics,
         is_experimental=is_experimental,
         warnings_list=warnings_list,
@@ -300,7 +329,7 @@ def main() -> int:
         selected_model_name=best_name,
         model_object=best_pipeline,
         features=features,
-        threshold=args.threshold,
+        threshold=active_threshold,
         fingerprint=diagnostics.dataset_fingerprint_sha256,
         is_experimental=is_experimental,
     )
