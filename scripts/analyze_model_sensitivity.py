@@ -21,31 +21,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ml.features import FEATURE_ALLOWLIST
 
-BASELINE_RECORD = {
+ALL_BASELINE_RECORD = {
     "age": 55.0,
     "heart_rate": 78.0,
     "systolic_bp": 122.0,
     "diastolic_bp": 78.0,
+    "oxygen_saturation": 98.0,
     "spo2": 98.0,
     "respiratory_rate": 16.0,
     "temperature_c": 37.0,
     "previous_admissions": 1.0,
+    "comorbidity_count": 1.0,
     "chronic_conditions_count": 1.0,
+    "esi": 3.0,
+    "arrival_by_ambulance": 0.0,
+    "altered_mental_status": 0.0,
     "lactate": 1.4,
     "observation_hour": 14.0,
     "prior_observation_count": 2.0,
 }
 
-FEATURE_RANGES = {
+ALL_FEATURE_RANGES = {
     "age": [18.0, 35.0, 55.0, 70.0, 85.0, 100.0],
     "heart_rate": [45.0, 60.0, 78.0, 100.0, 130.0, 160.0, 190.0],
     "systolic_bp": [70.0, 95.0, 122.0, 150.0, 180.0, 220.0],
     "diastolic_bp": [45.0, 60.0, 78.0, 95.0, 115.0, 130.0],
+    "oxygen_saturation": [75.0, 82.0, 88.0, 93.0, 98.0, 100.0],
     "spo2": [75.0, 82.0, 88.0, 93.0, 98.0, 100.0],
     "respiratory_rate": [8.0, 12.0, 16.0, 24.0, 32.0, 42.0],
     "temperature_c": [35.0, 36.2, 37.0, 38.2, 39.5, 41.0],
     "previous_admissions": [0.0, 1.0, 2.0, 4.0, 8.0, 12.0],
+    "comorbidity_count": [0.0, 1.0, 2.0, 4.0, 6.0, 8.0],
     "chronic_conditions_count": [0.0, 1.0, 2.0, 4.0, 6.0, 8.0],
+    "esi": [1.0, 2.0, 3.0, 4.0, 5.0],
+    "arrival_by_ambulance": [0.0, 1.0],
+    "altered_mental_status": [0.0, 1.0],
     "lactate": [0.6, 1.0, 1.4, 2.5, 5.0, 8.5, 12.0],
     "observation_hour": [0.0, 4.0, 8.0, 14.0, 18.0, 23.0],
     "prior_observation_count": [0.0, 2.0, 5.0, 10.0, 20.0, 35.0],
@@ -62,8 +72,11 @@ def run_sensitivity_analysis(model_path: Path = Path("models/risk_model.joblib")
     threshold = float(bundle.get("threshold", 0.70))
     model_name = bundle.get("model_name", "unknown")
 
+    baseline_record = {feat: ALL_BASELINE_RECORD.get(feat, 0.0) for feat in features}
+    feature_ranges = {feat: ALL_FEATURE_RANGES[feat] for feat in features if feat in ALL_FEATURE_RANGES}
+
     # Baseline prediction
-    df_base = pd.DataFrame([BASELINE_RECORD], columns=features)
+    df_base = pd.DataFrame([baseline_record], columns=features)
     base_prob = float(model.predict_proba(df_base)[0, 1])
     base_pred = int(base_prob >= threshold)
 
@@ -75,10 +88,10 @@ def run_sensitivity_analysis(model_path: Path = Path("models/risk_model.joblib")
 
     results_by_feature = {}
 
-    for feat_name, sweep_vals in FEATURE_RANGES.items():
+    for feat_name, sweep_vals in feature_ranges.items():
         sweep_rows = []
         for val in sweep_vals:
-            rec = dict(BASELINE_RECORD)
+            rec = dict(baseline_record)
             rec[feat_name] = float(val)
             df_sweep = pd.DataFrame([rec], columns=features)
             prob = float(model.predict_proba(df_sweep)[0, 1])
@@ -118,7 +131,7 @@ def run_sensitivity_analysis(model_path: Path = Path("models/risk_model.joblib")
     report = {
         "model_name": model_name,
         "threshold": threshold,
-        "baseline_record": BASELINE_RECORD,
+        "baseline_record": baseline_record,
         "baseline_probability": round(base_prob, 6),
         "baseline_prediction": base_pred,
         "features_audited": len(results_by_feature),

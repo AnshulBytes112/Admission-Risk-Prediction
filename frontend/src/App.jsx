@@ -20,9 +20,11 @@ import {
   ArrowRight,
   Info,
   GitBranch,
+  Sliders,
 } from 'lucide-react';
 import { api } from './services/api';
 import BigDataPipeline from './pages/BigDataPipeline';
+import LivePipelineExecutionTrace from './components/pipeline/LivePipelineExecutionTrace';
 import {
   buildPredictionPayload,
   areInputsStale,
@@ -83,8 +85,43 @@ export default function App() {
 
   // Backend Health States
   const [apiStatus, setApiStatus] = useState({ online: false, latencyMs: 0 });
-  const [modelStatus, setModelStatus] = useState({ ready: false, modelName: 'logistic_regression', threshold: 0.70 });
+  const [modelStatus, setModelStatus] = useState({ ready: false, modelName: 'xgboost', threshold: 0.70 });
   const [loadingStatus, setLoadingStatus] = useState(true);
+  const [decisionThreshold, setDecisionThreshold] = useState(0.70);
+
+  // Dynamic threshold change handler (propagates to backend and recalculates UI instantly)
+  const handleThresholdChange = (val) => {
+    const newTh = parseFloat(Number(val).toFixed(2));
+    setDecisionThreshold(newTh);
+    setModelStatus((prev) => ({ ...prev, threshold: newTh }));
+
+    // Persist to backend runtime threshold
+    api.setThreshold(newTh);
+
+    // If single prediction is displayed, immediately recalculate decision in UI
+    if (singleResult) {
+      const isAdmit = singleResult.risk_probability >= newTh;
+      setSingleResult((prev) => ({
+        ...prev,
+        threshold: newTh,
+        review_flag: isAdmit,
+        prediction: isAdmit ? 1 : 0,
+      }));
+    }
+
+    // If batch predictions are displayed, immediately recalculate all predictions
+    if (batchResult && batchResult.predictions) {
+      setBatchResult((prev) => ({
+        ...prev,
+        predictions: prev.predictions.map((p) => ({
+          ...p,
+          threshold: newTh,
+          review_flag: p.risk_probability >= newTh,
+          prediction: p.risk_probability >= newTh ? 1 : 0,
+        })),
+      }));
+    }
+  };
 
   // Single Prediction Form State
   const [presetKey, setPresetKey] = useState('Typical / Low Risk Case');
@@ -122,16 +159,18 @@ export default function App() {
     });
 
     if (ready.ok && ready.data) {
+      const th = ready.data.model_threshold || 0.70;
       setModelStatus({
         ready: true,
-        modelName: ready.data.model_name || 'logistic_regression',
-        threshold: ready.data.model_threshold || 0.70,
+        modelName: ready.data.model_name || 'xgboost',
+        threshold: th,
         featureCount: ready.data.feature_count || 12,
       });
+      setDecisionThreshold(th);
     } else {
       setModelStatus({
         ready: false,
-        modelName: 'logistic_regression',
+        modelName: 'xgboost',
         threshold: 0.70,
         featureCount: 12,
       });
@@ -193,7 +232,7 @@ export default function App() {
 
     setSingleLoading(true);
 
-    const res = await api.predictSingle(validation.payload);
+    const res = await api.predictSingle(validation.payload, decisionThreshold);
 
     if (res.ok && res.data) {
       if (typeof res.data.risk_probability !== 'number' || !Number.isFinite(res.data.risk_probability)) {
@@ -275,7 +314,7 @@ export default function App() {
     setBatchLoading(true);
     setBatchError(null);
 
-    const res = await api.predictBatch(batchRecords);
+    const res = await api.predictBatch(batchRecords, decisionThreshold);
 
     if (res.ok && res.data) {
       setBatchResult({
@@ -468,6 +507,96 @@ export default function App() {
         {/* DASHBOARD OR SINGLE PREDICTION VIEW */}
         {(activeTab === 'dashboard' || activeTab === 'single') && (
           <>
+            {/* Dynamic Clinical Decision Threshold Controller */}
+            <div className="threshold-controller-card">
+              <div className="threshold-card-header">
+                <div className="threshold-title-group">
+                  <div className="threshold-icon-circle">
+                    <Sliders size={18} />
+                  </div>
+                  <div>
+                    <div className="threshold-title">Clinical Decision Threshold (Operating Cutoff)</div>
+                    <div className="threshold-subtitle">
+                      Dynamically calibrate the admission cutoff in real time across the ML model, API, and live pipeline.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="threshold-live-badge">
+                  Operating Cutoff: <strong>{decisionThreshold.toFixed(2)}</strong> ({Math.round(decisionThreshold * 100)}%)
+                </div>
+              </div>
+
+              <div className="threshold-slider-container">
+                <input
+                  type="range"
+                  min="0.10"
+                  max="0.90"
+                  step="0.01"
+                  value={decisionThreshold}
+                  onChange={(e) => handleThresholdChange(e.target.value)}
+                  className="threshold-range-slider"
+                />
+                <div className="threshold-range-limits">
+                  <span>0.10 &bull; High Sensitivity (Flag More Admissions)</span>
+                  <span>0.50 &bull; Standard Balanced Cutoff</span>
+                  <span>0.90 &bull; High Specificity (Conserve ED Beds)</span>
+                </div>
+              </div>
+
+              <div className="threshold-presets-row">
+                <span className="threshold-presets-label">Operating Presets:</span>
+                <button
+                  type="button"
+                  className={`threshold-preset-btn ${decisionThreshold === 0.35 ? 'active' : ''}`}
+                  onClick={() => handleThresholdChange(0.35)}
+                >
+                  0.35 (Sensitive / Sepsis Alert)
+                </button>
+                <button
+                  type="button"
+                  className={`threshold-preset-btn ${decisionThreshold === 0.50 ? 'active' : ''}`}
+                  onClick={() => handleThresholdChange(0.50)}
+                >
+                  0.50 (Standard Balanced)
+                </button>
+                <button
+                  type="button"
+                  className={`threshold-preset-btn ${decisionThreshold === 0.70 ? 'active' : ''}`}
+                  onClick={() => handleThresholdChange(0.70)}
+                >
+                  0.70 (Model Default Cutoff)
+                </button>
+                <button
+                  type="button"
+                  className={`threshold-preset-btn ${decisionThreshold === 0.85 ? 'active' : ''}`}
+                  onClick={() => handleThresholdChange(0.85)}
+                >
+                  0.85 (Strict / Bed Conservation)
+                </button>
+              </div>
+
+              {singleResult && (
+                <div className={`threshold-insight-banner ${singleResult.prediction === 1 ? 'admission' : 'no-admission'}`}>
+                  {singleResult.prediction === 1 ? (
+                    <>
+                      <AlertTriangle size={16} />
+                      <span>
+                        Current Patient Risk (<strong>{(singleResult.risk_probability * 100).toFixed(1)}%</strong>) &ge; Threshold (<strong>{decisionThreshold.toFixed(2)}</strong>) &rarr; <strong style={{ textDecoration: 'underline' }}>Admission Predicted (1)</strong>. Drag slider above {singleResult.risk_probability.toFixed(2)} to classify as Observe / Discharge.
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={16} />
+                      <span>
+                        Current Patient Risk (<strong>{(singleResult.risk_probability * 100).toFixed(1)}%</strong>) &lt; Threshold (<strong>{decisionThreshold.toFixed(2)}</strong>) &rarr; <strong style={{ textDecoration: 'underline' }}>No Admission Required (0)</strong>. Drag slider below {singleResult.risk_probability.toFixed(2)} to trigger an admission decision.
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Middle Row: Single Patient Prediction & Result */}
             <div className="prediction-grid">
               {/* Left Column: Form */}
@@ -813,8 +942,17 @@ export default function App() {
                       </tbody>
                     </table>
 
+                    {singleResult.pipeline_trace && (
+                      <div className="kafka-hdfs-quick-badge">
+                        <span className="live-pulse-dot" />
+                        <span>
+                          <strong>Live Pipeline ACK:</strong> Kafka <code>{singleResult.pipeline_trace.kafka?.topic || 'patient-observations'}</code> (Offset <strong style={{ color: '#2563eb' }}>#{singleResult.pipeline_trace.kafka?.offset ?? '--'}</strong>) &bull; HDFS Streamed
+                        </span>
+                      </div>
+                    )}
+
                     <div style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic', borderTop: '1px dashed #e2e8f0', paddingTop: '8px' }}>
-                      * Model score generated live by FastAPI using scikit-learn LogisticRegression. All patient records are synthetic.
+                      * Model score generated live by FastAPI using XGBoost. Patient observation streamed to Apache Kafka &amp; archived in Hadoop HDFS. All patient records are synthetic.
                     </div>
                   </div>
                 ) : (
@@ -828,6 +966,16 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Live Big Data Pipeline Execution Trace (Kafka -> Hadoop HDFS -> PySpark -> XGBoost) */}
+            {singleResult && singleResult.pipeline_trace && (
+              <LivePipelineExecutionTrace
+                pipelineTrace={singleResult.pipeline_trace}
+                singleResult={singleResult}
+                submittedSnapshot={submittedSnapshot}
+                onExplorePipeline={() => setActiveTab('pipeline')}
+              />
+            )}
 
             {/* Bottom Row: Batch Prediction & Model Information (matching reference image) */}
             {activeTab === 'dashboard' && (

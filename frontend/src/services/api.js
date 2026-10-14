@@ -82,16 +82,30 @@ export const api = {
   checkReadiness: () => fetchWithTiming('/ready'),
   getModelInfo: () => fetchWithTiming('/model-info'),
   getMetadata: () => fetchWithTiming('/metadata'),
-  predictSingle: (patientData) =>
-    fetchWithTiming('/predict', {
+  getThreshold: () => fetchWithTiming('/config/threshold'),
+  setThreshold: (threshold) =>
+    fetchWithTiming('/config/threshold', {
+      method: 'POST',
+      body: JSON.stringify({ threshold }),
+    }),
+  resetThreshold: () =>
+    fetchWithTiming('/config/threshold', {
+      method: 'DELETE',
+    }),
+  predictSingle: (patientData, threshold) => {
+    const q = threshold !== undefined && threshold !== null ? `?threshold=${threshold}` : '';
+    return fetchWithTiming(`/predict${q}`, {
       method: 'POST',
       body: JSON.stringify(patientData),
-    }),
-  predictBatch: (records) =>
-    fetchWithTiming('/predict/batch', {
+    });
+  },
+  predictBatch: (records, threshold) => {
+    const q = threshold !== undefined && threshold !== null ? `?threshold=${threshold}` : '';
+    return fetchWithTiming(`/predict/batch${q}`, {
       method: 'POST',
       body: JSON.stringify(records),
-    }),
+    });
+  },
   baseUrl: API_BASE_URL,
   displayUrl: DISPLAY_API_URL,
 };

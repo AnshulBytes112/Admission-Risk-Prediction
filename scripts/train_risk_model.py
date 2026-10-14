@@ -13,6 +13,8 @@ import logging
 import os
 import sys
 from pathlib import Path
+import numpy as np
+import pandas as pd
 
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -26,6 +28,7 @@ from ml.evaluation import (
     tune_threshold_on_validation,
 )
 from ml.features import (
+    EXCLUDED_COLUMNS,
     TARGET_COLUMN,
     DataAdequacyError,
     inspect_and_diagnose_dataset,
@@ -51,8 +54,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=str,
-        default="data/processed/features.parquet",
-        help="Path to processed feature Parquet directory, Parquet file, or CSV file.",
+        default="data/raw/train.csv" if Path("data/raw/train.csv").exists() else "data/demo/synthetic_demo_patients.csv",
+        help="Path to feature dataset (CSV or Parquet).",
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        default=os.getenv("TARGET_COLUMN", "admission_within_24h"),
+        help="Target column name for binary risk classification.",
     )
     parser.add_argument(
         "--output-dir",
@@ -79,15 +88,23 @@ def parse_arguments() -> argparse.Namespace:
         help="Fraction of dataset reserved for validation and model selection.",
     )
     parser.add_argument(
+        "--select-model",
+        type=str,
+        default="auto",
+        choices=["auto", "xgboost", "logistic_regression", "random_forest", "hist_gradient_boosting"],
+        help="Candidate model selection rule (default: auto - selects by validation PR-AUC).",
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
         default=float(os.getenv("RISK_THRESHOLD", "0.70")),
-        help="Decision threshold for positive risk classification.",
+        help="Decision threshold for positive risk classification (default: 0.70).",
     )
     parser.add_argument(
         "--tune-threshold",
         action="store_true",
-        help="Tune decision threshold on validation set to maximize F1.",
+        default=False,
+        help="Tune decision threshold on validation set to maximize F1 (if omitted, uses --threshold).",
     )
     parser.add_argument(
         "--minimum-positive-examples",
@@ -214,21 +231,26 @@ def main() -> int:
     print(f"  Test set  : {split.test_size} rows ({split.test_positives} pos, {split.test_negatives} neg)")
 
     # Step 5: Train and compare baseline models
-    candidate_names = ["logistic_regression", "random_forest", "hist_gradient_boosting"]
+    candidate_names = ["dummy", "logistic_regression", "random_forest", "xgboost", "hist_gradient_boosting"]
     validation_results: dict[str, dict[str, Any]] = {}
     fitted_models = {}
 
+    target_col = args.target if args.target in df.columns else TARGET_COLUMN
     X_train = split.train_df[features]
-    y_train = split.train_df[TARGET_COLUMN].astype(int)
+    y_train = split.train_df[target_col].astype(int)
     X_val = split.val_df[features]
-    y_val = split.val_df[TARGET_COLUMN].astype(int)
+    y_val = split.val_df[target_col].astype(int)
     X_test = split.test_df[features]
-    y_test = split.test_df[TARGET_COLUMN].astype(int)
+    y_test = split.test_df[target_col].astype(int)
+
+    pos_tr = int(y_train.sum())
+    neg_tr = len(y_train) - pos_tr
+    spw = float(neg_tr / max(pos_tr, 1))
 
     print("\n--- TRAINING CANDIDATE MODELS ---")
     for name in candidate_names:
         print(f"Fitting pipeline: {name} ...")
-        pipe = build_pipeline(name, numeric_features=features, seed=args.seed)
+        pipe = build_pipeline(name, numeric_features=features, seed=args.seed, scale_pos_weight=spw if name == "xgboost" else None)
         pipe.fit(X_train, y_train)
         fitted_models[name] = pipe
 
@@ -238,11 +260,18 @@ def main() -> int:
 
         pr_auc = val_metrics.get("pr_auc_average_precision")
         pr_str = f"{pr_auc:.4f}" if pr_auc is not None else "N/A"
+        roc = val_metrics.get("roc_auc")
+        roc_str = f"{roc:.4f}" if roc is not None else "N/A"
         f1_str = f"{val_metrics.get('f1_score', 0):.4f}"
-        print(f"  -> Validation PR-AUC: {pr_str} | F1: {f1_str} | Accuracy: {val_metrics.get('accuracy', 0):.4f}")
+        print(f"  -> Validation PR-AUC: {pr_str} | ROC-AUC: {roc_str} | F1: {f1_str} | Accuracy: {val_metrics.get('accuracy', 0):.4f}")
 
     # Step 6: Select best model on validation PR-AUC (with F1 tie-breaker)
-    best_name, selection_reason = select_best_model(validation_results)
+    if getattr(args, "select_model", "auto") != "auto" and args.select_model in fitted_models:
+        best_name = args.select_model
+        val_m = validation_results[best_name]
+        selection_reason = f"Configured candidate selection: {best_name} (Validation PR-AUC: {val_m.get('pr_auc_average_precision', 'N/A')}, ROC-AUC: {val_m.get('roc_auc', 'N/A')})"
+    else:
+        best_name, selection_reason = select_best_model(validation_results)
     best_pipeline = fitted_models[best_name]
 
     # Threshold tuning on validation set only
@@ -353,6 +382,37 @@ def main() -> int:
 
     metadata_json_path.write_text(json.dumps(metadata_dict, indent=2), encoding="utf-8")
     print(f"Saved model metadata     : {metadata_json_path}")
+
+    # Export model comparison table CSV
+    comparison_rows = []
+    for name, m in validation_results.items():
+        comparison_rows.append({
+            "model_name": name,
+            "accuracy": m.get("accuracy"),
+            "precision": m.get("precision"),
+            "recall": m.get("recall"),
+            "f1_score": m.get("f1_score"),
+            "roc_auc": m.get("roc_auc"),
+            "pr_auc": m.get("pr_auc_average_precision"),
+            "brier_score": m.get("brier_score"),
+            "is_selected": (name == best_name),
+        })
+    df_comp = pd.DataFrame(comparison_rows)
+    comp_csv_path = output_dir / "model_comparison.csv"
+    df_comp.to_csv(comp_csv_path, index=False)
+    print(f"Saved model comparison   : {comp_csv_path}")
+
+    # Export feature schema JSON
+    schema_path = output_dir / "feature_schema.json"
+    schema_dict = {
+        "schema_version": "2.0.0" if "oxygen_saturation" in features else "1.0.0",
+        "target": target_col,
+        "features": features,
+        "feature_count": len(features),
+        "excluded_columns": EXCLUDED_COLUMNS,
+    }
+    schema_path.write_text(json.dumps(schema_dict, indent=2), encoding="utf-8")
+    print(f"Saved feature schema     : {schema_path}")
 
     print("\n================================================================================")
     print("PHASE 5 EXECUTION SUCCESSFUL")

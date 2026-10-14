@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import sklearn
+from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -23,9 +24,11 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
+    roc_curve,
 )
 
 from ml.features import EXCLUDED_COLUMNS, FEATURE_ALLOWLIST, TARGET_COLUMN
@@ -65,12 +68,41 @@ def compute_metrics(
         pr_auc = float(average_precision_score(y_true_arr, y_scores))
         pr_auc_note = None
         brier = float(brier_score_loss(y_true_arr, y_scores))
+
+        # Precision-Recall curve summary points
+        precisions, recalls, _ = precision_recall_curve(y_true_arr, y_scores)
+        pr_idx = np.linspace(0, len(precisions) - 1, min(8, len(precisions)), dtype=int)
+        pr_curve_sample = [
+            {"recall": round(float(recalls[i]), 4), "precision": round(float(precisions[i]), 4)}
+            for i in pr_idx
+        ]
+
+        # ROC curve summary points
+        fprs, tprs, _ = roc_curve(y_true_arr, y_scores)
+        roc_idx = np.linspace(0, len(fprs) - 1, min(8, len(fprs)), dtype=int)
+        roc_curve_sample = [
+            {"false_positive_rate": round(float(fprs[i]), 4), "true_positive_rate": round(float(tprs[i]), 4)}
+            for i in roc_idx
+        ]
+
+        # Calibration curve (reliability diagram bins)
+        try:
+            prob_true, prob_pred = calibration_curve(y_true_arr, y_scores, n_bins=5, strategy="uniform")
+            calibration_bins = [
+                {"mean_predicted_probability": round(float(p_pred), 4), "observed_positive_rate": round(float(p_true), 4)}
+                for p_pred, p_true in zip(prob_pred, prob_true)
+            ]
+        except Exception:
+            calibration_bins = []
     else:
         roc_auc = None
         roc_auc_note = f"Undefined: ground truth contains only class(es) {unique_classes.tolist()}."
         pr_auc = None
         pr_auc_note = f"Undefined: ground truth contains only class(es) {unique_classes.tolist()}."
         brier = float(brier_score_loss(y_true_arr, y_scores)) if total_evaluated > 0 else None
+        pr_curve_sample = []
+        roc_curve_sample = []
+        calibration_bins = []
 
     # Threshold-dependent metrics with zero_division safety
     acc = float(accuracy_score(y_true_arr, y_pred))
@@ -78,6 +110,10 @@ def compute_metrics(
     rec = float(recall_score(y_true_arr, y_pred, zero_division=0))
     f1 = float(f1_score(y_true_arr, y_pred, zero_division=0))
     cm = confusion_matrix(y_true_arr, y_pred, labels=[0, 1]).tolist()
+    tn, fp = cm[0][0], cm[0][1]
+    fn, tp = cm[1][0], cm[1][1]
+    specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+    predicted_pos_rate = float(y_pred.mean()) if len(y_pred) > 0 else 0.0
     clf_report = classification_report(y_true_arr, y_pred, labels=[0, 1], output_dict=True, zero_division=0)
 
     return {
@@ -86,10 +122,13 @@ def compute_metrics(
         "positive_examples": positives_evaluated,
         "negative_examples": negatives_evaluated,
         "positive_prevalence": round(positive_prevalence, 4),
+        "predicted_positive_rate": round(predicted_pos_rate, 4),
         "no_skill_pr_auc_baseline": round(positive_prevalence, 4),
         "accuracy": round(acc, 4),
         "precision": round(prec, 4),
+        "recall_sensitivity": round(rec, 4),
         "recall": round(rec, 4),
+        "specificity": round(specificity, 4),
         "f1_score": round(f1, 4),
         "roc_auc": round(roc_auc, 4) if roc_auc is not None else None,
         "roc_auc_note": roc_auc_note,
@@ -97,6 +136,9 @@ def compute_metrics(
         "pr_auc_note": pr_auc_note,
         "brier_score": round(brier, 4) if brier is not None else None,
         "confusion_matrix_labels_0_1": cm,
+        "pr_curve_sample": pr_curve_sample,
+        "roc_curve_sample": roc_curve_sample,
+        "calibration_bins": calibration_bins,
         "classification_report": clf_report,
     }
 
@@ -120,7 +162,12 @@ def select_best_model(
         pr_score = -1.0 if pr_auc is None else pr_auc
         return (pr_score, f1)
 
-    sorted_models = sorted(validation_results.items(), key=score_key, reverse=True)
+    # Filter out dummy/baseline models from final selection if non-dummy models are available
+    candidates = {k: v for k, v in validation_results.items() if not k.startswith("dummy")}
+    if not candidates:
+        candidates = validation_results
+
+    sorted_models = sorted(candidates.items(), key=score_key, reverse=True)
     best_name, best_metrics = sorted_models[0]
 
     if best_metrics.get("pr_auc_average_precision") is not None:
@@ -313,11 +360,18 @@ def generate_evaluation_report_md(report_dict: dict[str, Any]) -> str:
 *Evaluated once on the unseen test partition using the frozen selected model:*
 - **Accuracy**: `{test_m.get('accuracy')}`
 - **Precision (Threshold {test_m.get('decision_threshold')})**: `{test_m.get('precision')}`
-- **Recall (Threshold {test_m.get('decision_threshold')})**: `{test_m.get('recall')}`
+- **Recall / Sensitivity**: `{test_m.get('recall')}`
+- **Specificity**: `{test_m.get('specificity', 'N/A')}`
 - **F1-Score**: `{test_m.get('f1_score')}`
 - **ROC-AUC**: `{test_m.get('roc_auc')}` ({test_m.get('roc_auc_note', 'evaluated')})
 - **PR-AUC**: `{test_m.get('pr_auc_average_precision')}` ({test_m.get('pr_auc_note', 'evaluated')})
+- **Brier Score**: `{test_m.get('brier_score', 'N/A')}`
 - **Confusion Matrix [[TN, FP], [FN, TP]]**: `{test_m.get('confusion_matrix_labels_0_1')}`
+
+### Calibration Summary (Reliability Bins)
+| Mean Predicted Probability | Observed Positive Rate |
+|---|---|
+""" + ("\n".join(f"| {b['mean_predicted_probability']:.4f} | {b['observed_positive_rate']:.4f} |" for b in test_m.get("calibration_bins", [])) if test_m.get("calibration_bins") else "| N/A | N/A |") + f"""
 
 ## Warnings and Limitations
 {warnings_md}
@@ -367,6 +421,7 @@ def generate_model_metadata(
             "python_version": sys.version,
             "platform": platform.platform(),
             "scikit_learn_version": sklearn.__version__,
+            "xgboost_version": getattr(sys.modules.get("xgboost"), "__version__", None),
         },
         "evaluation_report_location": "models/evaluation_report.json",
         "safety_disclaimer": (

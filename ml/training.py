@@ -18,12 +18,20 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
+try:
+    from xgboost import XGBClassifier
+    HAS_XGBOOST = True
+except ImportError:
+    XGBClassifier = None
+    HAS_XGBOOST = False
 
 from ml.features import GROUP_COLUMN, TARGET_COLUMN
 
@@ -195,13 +203,19 @@ def split_dataset(
     )
 
 
-def build_pipeline(model_name: str, numeric_features: list[str], seed: int = 42) -> Pipeline:
+def build_pipeline(
+    model_name: str,
+    numeric_features: list[str],
+    seed: int = 42,
+    scale_pos_weight: float | None = None,
+) -> Pipeline:
     """Build a complete scikit-learn training pipeline with leakage-safe preprocessors.
 
     Args:
-        model_name: One of 'logistic_regression', 'random_forest', 'hist_gradient_boosting'.
+        model_name: One of 'logistic_regression', 'random_forest', 'xgboost', 'dummy', 'hist_gradient_boosting'.
         numeric_features: Ordered list of numeric feature column names.
         seed: Random seed for model training.
+        scale_pos_weight: Class weight ratio for positive class in XGBoost.
 
     Returns:
         Configured Pipeline.
@@ -241,13 +255,58 @@ def build_pipeline(model_name: str, numeric_features: list[str], seed: int = 42)
         )
         classifier = RandomForestClassifier(
             n_estimators=100,
+            max_depth=8,
             min_samples_leaf=2,
             class_weight="balanced_subsample",
             random_state=seed,
             n_jobs=-1,
         )
+    elif model_name == "xgboost":
+        if not HAS_XGBOOST or XGBClassifier is None:
+            raise ImportError("xgboost package is not installed. Run `pip install xgboost`.")
+        preprocessor = ColumnTransformer(
+            transformers=[
+                (
+                    "numeric",
+                    Pipeline([
+                        ("imputer", SimpleImputer(strategy="median")),
+                    ]),
+                    numeric_features,
+                )
+            ],
+            remainder="drop",
+        )
+        xgb_kwargs = {
+            "n_estimators": 150,
+            "max_depth": 3,
+            "learning_rate": 0.03,
+            "subsample": 0.85,
+            "colsample_bytree": 0.85,
+            "min_child_weight": 2,
+            "gamma": 0.1,
+            "reg_alpha": 0.1,
+            "reg_lambda": 1.0,
+            "objective": "binary:logistic",
+            "eval_metric": "logloss",
+            "random_state": seed,
+            "n_jobs": 4,
+        }
+        if scale_pos_weight is not None and scale_pos_weight > 0:
+            xgb_kwargs["scale_pos_weight"] = float(scale_pos_weight)
+        classifier = XGBClassifier(**xgb_kwargs)
+    elif model_name in ("dummy", "dummy_baseline"):
+        preprocessor = ColumnTransformer(
+            transformers=[
+                (
+                    "numeric",
+                    SimpleImputer(strategy="median"),
+                    numeric_features,
+                )
+            ],
+            remainder="drop",
+        )
+        classifier = DummyClassifier(strategy="prior")
     elif model_name == "hist_gradient_boosting":
-        # Consistent median imputation across pipelines ensures fair comparison
         preprocessor = ColumnTransformer(
             transformers=[
                 (

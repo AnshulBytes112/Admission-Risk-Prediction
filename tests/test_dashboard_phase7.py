@@ -248,7 +248,7 @@ def test_load_local_model_artifacts():
     meta, eval_rep = load_local_model_artifacts()
     # If files exist in repo, verify their contents
     if meta is not None:
-        assert meta.get("model_name") == "logistic_regression"
+        assert meta.get("model_name") in ("xgboost", "logistic_regression")
         assert meta.get("feature_count") == 12
     if eval_rep is not None:
         assert eval_rep.get("is_experimental") is True

@@ -17,8 +17,8 @@ import pandas as pd
 TARGET_COLUMN = "admission_within_24h"
 GROUP_COLUMN = "patient_id"
 
-# Explicit allowlist of candidate numeric features for model training and inference
-FEATURE_ALLOWLIST = [
+# Canonical feature schemas
+FEATURE_ALLOWLIST_V1 = [
     "age",
     "heart_rate",
     "systolic_bp",
@@ -33,14 +33,48 @@ FEATURE_ALLOWLIST = [
     "prior_observation_count",
 ]
 
+# Upgraded schema for train.csv (with emergency severity index & triage indicators)
+FEATURE_ALLOWLIST_V2 = [
+    "age",
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "oxygen_saturation",
+    "respiratory_rate",
+    "temperature_c",
+    "previous_admissions",
+    "comorbidity_count",
+    "esi",
+    "arrival_by_ambulance",
+    "altered_mental_status",
+]
+
+# Default active feature allowlist — must match frontend form V1 schema
+# V1 uses: spo2, chronic_conditions_count, lactate, observation_hour, prior_observation_count
+# V2 used: oxygen_saturation, comorbidity_count, esi, arrival_by_ambulance, altered_mental_status
+# Frontend sends V1 fields, so model must be trained on V1.
+FEATURE_ALLOWLIST = FEATURE_ALLOWLIST_V1
+
+# Semantic feature mappings between schema versions
+FEATURE_ALIASES = {
+    "spo2": "oxygen_saturation",
+    "oxygen_saturation": "spo2",
+    "chronic_conditions_count": "comorbidity_count",
+    "comorbidity_count": "chronic_conditions_count",
+    "patient_id": "record_id",
+    "record_id": "patient_id",
+}
+
 # Explicit list of columns to be excluded from feature inputs to prevent target leakage,
 # patient identity memorization, or streaming/lake metadata contamination.
 EXCLUDED_COLUMNS = [
+    "record_id",
     "event_id",
     "patient_id",
     "observation_ts",
     "observation_date",
     "admission_within_24h",
+    "disposition",
     "is_synthetic",
     "data_origin",
     "synthetic_data",
@@ -132,14 +166,24 @@ def load_feature_dataset(path: str | Path) -> pd.DataFrame:
 def select_and_validate_features(columns: list[str]) -> list[str]:
     """Select allowed model features and verify that no identifier/metadata columns leak.
 
+    Supports both upgraded V2 schema (train.csv) and legacy V1 schema (Parquet).
+
     Args:
         columns: Available column names in dataframe.
 
     Returns:
-        Sorted/ordered list of validated features.
+        Ordered list of validated features.
     """
-    # Enforce leak prevention: none of the excluded columns can be selected
-    selected = [c for c in FEATURE_ALLOWLIST if c in columns and c not in EXCLUDED_COLUMNS]
+    # Always prefer V1 schema (matches the FastAPI form and frontend)
+    v1_candidates = [c for c in FEATURE_ALLOWLIST_V1 if c in columns and c not in EXCLUDED_COLUMNS]
+    v2_candidates = [c for c in FEATURE_ALLOWLIST_V2 if c in columns and c not in EXCLUDED_COLUMNS]
+
+    if len(v1_candidates) > 0:
+        selected = v1_candidates
+    elif len(v2_candidates) > 0:
+        selected = v2_candidates
+    else:
+        selected = [c for c in columns if c not in EXCLUDED_COLUMNS and c != TARGET_COLUMN]
 
     leaked = [c for c in selected if c in EXCLUDED_COLUMNS]
     if leaked:
@@ -148,7 +192,7 @@ def select_and_validate_features(columns: list[str]) -> list[str]:
     if not selected:
         raise ValueError(
             f"None of the required features from the allowlist were found. "
-            f"Expected features within: {FEATURE_ALLOWLIST}"
+            f"Expected features within: {FEATURE_ALLOWLIST_V2} or {FEATURE_ALLOWLIST_V1}"
         )
 
     return selected

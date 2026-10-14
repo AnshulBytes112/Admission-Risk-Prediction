@@ -139,53 +139,105 @@ def validate_artifacts(
     else:
         print(f"[WARNING] Evaluation report missing: {report_path}")
 
-    # Check 5: Inference compatibility smoke test
-    print("\n--- INFERENCE SMOKE TEST ---")
-    synthetic_patient = {
-        "age": 62.0,
-        "heart_rate": 84.0,
-        "systolic_bp": 130.0,
-        "diastolic_bp": 82.0,
-        "spo2": 97.0,
-        "respiratory_rate": 18.0,
-        "temperature_c": 37.0,
-        "previous_admissions": 1.0,
-        "chronic_conditions_count": 2.0,
-        "lactate": 1.3,
-        "observation_hour": 14.0,
-        "prior_observation_count": 1.0,
-    }
+    # Check 5: Leakage check
+    prohibited_features = {"record_id", "is_synthetic", "data_origin", "admission_within_24h", "disposition"}
+    leaked = prohibited_features.intersection(set(features))
+    if leaked:
+        print(f"[FAIL] Data leakage detected! Prohibited features in model: {leaked}")
+        failed = True
+    else:
+        print("[PASS] Leakage check passed: No identifier, provenance, target, or disposition columns in features.")
 
-    # Ensure all features in bundle are provided
-    test_row = {feat: synthetic_patient.get(feat, 0.0) for feat in features}
-    input_df = pd.DataFrame([test_row], columns=features)
+    # Check 6: Multi-record and Batch Parity Smoke Test
+    print("\n--- INFERENCE SMOKE & PARITY TESTS ---")
+    patient_records = [
+        {
+            "age": 62.0, "heart_rate": 84.0, "systolic_bp": 130.0, "diastolic_bp": 82.0,
+            "oxygen_saturation": 97.0, "respiratory_rate": 18.0, "temperature_c": 37.0,
+            "previous_admissions": 1.0, "comorbidity_count": 2.0, "esi": 3.0,
+            "arrival_by_ambulance": 0.0, "altered_mental_status": 0.0
+        },
+        {
+            "age": 78.0, "heart_rate": 110.0, "systolic_bp": 95.0, "diastolic_bp": 60.0,
+            "oxygen_saturation": 91.0, "respiratory_rate": 28.0, "temperature_c": 38.5,
+            "previous_admissions": 4.0, "comorbidity_count": 3.0, "esi": 1.0,
+            "arrival_by_ambulance": 1.0, "altered_mental_status": 1.0
+        },
+        {
+            "age": 24.0, "heart_rate": 70.0, "systolic_bp": 120.0, "diastolic_bp": 80.0,
+            "oxygen_saturation": 99.0, "respiratory_rate": 14.0, "temperature_c": 36.6,
+            "previous_admissions": 0.0, "comorbidity_count": 0.0, "esi": 4.0,
+            "arrival_by_ambulance": 0.0, "altered_mental_status": 0.0
+        }
+    ]
+
+    # Map features for each test row (handling aliases)
+    test_rows = []
+    for pt in patient_records:
+        row = {}
+        for feat in features:
+            if feat in pt:
+                row[feat] = pt[feat]
+            elif feat == "spo2" and "oxygen_saturation" in pt:
+                row[feat] = pt["oxygen_saturation"]
+            elif feat == "chronic_conditions_count" and "comorbidity_count" in pt:
+                row[feat] = pt["comorbidity_count"]
+            else:
+                row[feat] = 0.0
+        test_rows.append(row)
+
+    batch_df = pd.DataFrame(test_rows, columns=features)
 
     try:
-        probabilities = model.predict_proba(input_df)
-        prob = float(probabilities[0, 1])
-        print(f"[PASS] Model executed inference: output probability = {prob:.6f}")
+        batch_probs = model.predict_proba(batch_df)
+        if batch_probs.ndim == 2 and batch_probs.shape[1] > 1:
+            batch_pos_probs = batch_probs[:, 1]
+        else:
+            batch_pos_probs = batch_probs[:, 0]
 
-        # Check probability bounds
-        if not np.isfinite(prob) or not (0.0 <= prob <= 1.0):
-            print(f"[FAIL] Probability out of valid bounds [0.0, 1.0]: {prob}")
+        # Check bounds
+        if not np.all(np.isfinite(batch_pos_probs)) or not np.all((batch_pos_probs >= 0.0) & (batch_pos_probs <= 1.0)):
+            print(f"[FAIL] Batch probabilities out of bounds [0, 1]: {batch_pos_probs}")
             failed = True
         else:
-            print("[PASS] Probability is finite and bounded within [0.0, 1.0].")
+            print(f"[PASS] Batch inference successful for {len(test_rows)} records. Probabilities: {np.round(batch_pos_probs, 4)}")
 
-        # Check decision thresholding
-        binary_pred = int(prob >= threshold)
-        review_flag = bool(prob >= threshold)
-        print(
-            f"[PASS] Threshold logic (threshold={threshold}): "
-            f"binary_pred={binary_pred}, review_flag={review_flag}"
-        )
+        # Check single vs batch parity
+        single_probs = []
+        for i, row in enumerate(test_rows):
+            single_df = pd.DataFrame([row], columns=features)
+            s_prob = model.predict_proba(single_df)[0, 1] if batch_probs.shape[1] > 1 else model.predict_proba(single_df)[0, 0]
+            single_probs.append(s_prob)
+
+        parity_diff = np.max(np.abs(batch_pos_probs - np.array(single_probs)))
+        if parity_diff > 1e-6:
+            print(f"[FAIL] Single vs batch inference parity violation! Max diff = {parity_diff}")
+            failed = True
+        else:
+            print(f"[PASS] Single vs batch prediction parity confirmed (max diff: {parity_diff:.2e} < 1e-6).")
+
+        # Check determinism
+        repeat_probs = model.predict_proba(batch_df)
+        repeat_pos = repeat_probs[:, 1] if batch_probs.shape[1] > 1 else repeat_probs[:, 0]
+        det_diff = np.max(np.abs(batch_pos_probs - repeat_pos))
+        if det_diff > 1e-9:
+            print(f"[FAIL] Non-deterministic inference detected! Diff = {det_diff}")
+            failed = True
+        else:
+            print("[PASS] Inference determinism confirmed across repeat evaluations.")
+
+        # Check threshold consistency
+        for i, p in enumerate(batch_pos_probs):
+            pred_class = int(p >= threshold)
+            print(f"       Patient {i+1}: prob={p:.4f}, threshold={threshold:.2f} -> predicted_class={pred_class}")
+
     except Exception as exc:
         print(f"[FAIL] Inference execution failed: {exc}")
         failed = True
 
-    # Check 6: Experimental status check
+    # Check 7: Experimental status check
     if is_experimental:
-        print("\n[NOTE] Model is marked as EXPERIMENTAL (trained on small dataset override).")
+        print("\n[NOTE] Model is marked as EXPERIMENTAL (academic synthetic demonstration).")
         print("       Artifacts are suitable for pipeline testing only, NOT clinical deployment.")
 
     print("\n================================================================================")
@@ -211,3 +263,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
