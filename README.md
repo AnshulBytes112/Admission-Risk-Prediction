@@ -280,15 +280,95 @@ py -3.13 -m pytest tests\ -v
 See [`docs/PHASE5_ML.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE5_ML.md) for complete mathematical rationale, data adequacy analysis, and future dataset scaling instructions.
 
 
-## Phase 6: FastAPI model inference
+## Phase 6: FastAPI Model Inference API & Prediction Serving (Windows PowerShell)
 
-After Phase 5 creates `models/risk_model.joblib`, start the API:
+Phase 6 implements a robust, asynchronous REST inference service using FastAPI. It loads the Phase 5 trained model bundle (`models/risk_model.joblib`), manages model lifecycles with startup caching, validates patient clinical observations against physiological ranges, prevents NaN/Infinity inputs, maps positive-class probabilities safely via `model.classes_`, and provides liveness (`/health`), readiness (`/ready`), model governance (`/model-info`), and single/batch prediction endpoints (`/predict`, `/predict/batch`).
 
+> [!CAUTION]
+> **ACADEMIC DEMONSTRATION NOTICE**:
+> All predictions and patient telemetry values are **SYNTHETIC**. The model is an academic big data software engineering demonstration and is **NOT clinically validated**. Do not use for medical decisions or patient triage.
+
+### 1. Run API in Docker
+Build and start the container in detached mode:
 ```powershell
-docker compose up --build -d api
+docker compose build api
+docker compose up -d api
+docker compose ps api
 ```
 
-Open the API docs at http://localhost:8000/docs. The main endpoints are `GET /health`, `GET /metadata`, `POST /predict`, and `POST /predict/batch`. The API mounts `./models` read-only at `/app/models`; if the trained model is missing, prediction returns HTTP 503 rather than silently inventing a score. See `docs/PHASE6_API.md` for a sample request.
+View live container logs:
+```powershell
+docker compose logs api --tail 50
+```
+
+### 2. Run API Locally with Python (Alternative)
+```powershell
+py -3.13 -m pip install -r requirements-api.txt
+$env:MODEL_PATH="models/risk_model.joblib"
+$env:RISK_THRESHOLD="0.70"
+py -3.13 -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 3. Test Endpoints via Windows PowerShell
+
+**A. Liveness Probe (`GET /health`):**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get | ConvertTo-Json
+```
+
+**B. Inference Readiness Probe (`GET /ready`):**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/ready" -Method Get | ConvertTo-Json
+```
+
+**C. Model Governance & Metrics (`GET /model-info`):**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/model-info" -Method Get | ConvertTo-Json -Depth 4
+```
+
+**D. Single Patient Risk Prediction (`POST /predict`):**
+```powershell
+$body = @{
+    patient_id = "SYN-POWERSHELL-01"
+    age = 71.0
+    heart_rate = 92.0
+    systolic_bp = 138.0
+    diastolic_bp = 88.0
+    spo2 = 94.0
+    respiratory_rate = 20.0
+    temperature_c = 37.2
+    previous_admissions = 1.0
+    chronic_conditions_count = 2.0
+    lactate = 1.8
+    observation_hour = 16.0
+    prior_observation_count = 1.0
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/predict" -Method Post -ContentType "application/json" -Body $body | ConvertTo-Json
+```
+
+**E. Batch Patient Risk Prediction (`POST /predict/batch`):**
+```powershell
+$batch = @(
+    @{
+        patient_id = "SYN-BATCH-01"; age = 55.0; heart_rate = 78.0; systolic_bp = 120.0; diastolic_bp = 80.0
+        spo2 = 98.0; respiratory_rate = 16.0; temperature_c = 36.8; previous_admissions = 0.0
+        chronic_conditions_count = 1.0; lactate = 1.1; observation_hour = 10.0; prior_observation_count = 0.0
+    },
+    @{
+        patient_id = "SYN-BATCH-02"; age = 82.0; heart_rate = 110.0; systolic_bp = 90.0; diastolic_bp = 60.0
+        spo2 = 90.0; respiratory_rate = 24.0; temperature_c = 38.5; previous_admissions = 4.0
+        chronic_conditions_count = 4.0; lactate = 3.2; observation_hour = 22.0; prior_observation_count = 5.0
+    }
+) | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/predict/batch" -Method Post -ContentType "application/json" -Body $batch | ConvertTo-Json -Depth 4
+```
+
+### Interactive API Documentation
+Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to explore interactive Swagger UI documentation.
+
+See [`docs/PHASE6_API.md`](file:///c:/Users/ANSHUL/BDA-PROJECT/emergency_admission_bda/docs/PHASE6_API.md) for full request/response schemas, security considerations, and error code specifications.
 
 
 ## Phase 7: Streamlit dashboard integration
